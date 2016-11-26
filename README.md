@@ -3,10 +3,11 @@ This project is a python3 library for interfacing with the IntesisHome Smart AC 
 It is fully asynchronous using the asyncio library, and utilises the private API used by the IntesisHome mobile apps.
 
 ## Usage
-Instantiate the IntesisHome controller device with username and password for the user.intesishome.com website.
-Status can be polled using the poll_status command suggested maximum of once every 5 minutes.
-Commands are sent using a TCP connection to the API which will then remain open until the connection times out. While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required.
-Callbacks can be added with the add_callback() method.
+ - Instantiate the IntesisHome controller device with username and password for the user.intesishome.com website.
+ - Status can be polled using the poll_status command suggested maximum of once every 5 minutes.
+ - Commands are sent using a TCP connection to the API which will then remain open until the connection times out. 
+ - While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required (check using *is_connected* property)
+ - Callbacks to be notified of state updates can be added with the add_callback() method.
 
 ## Basic example
 *Requires an async event loop to connect to the API and send commands*
