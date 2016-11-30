@@ -10,7 +10,7 @@ import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.const import (CONF_PASSWORD, CONF_USERNAME, CONF_STRUCTURE)
 # from homeassistant.util import Throttle
-# from homeassistant.components.discovery import load_platform
+from homeassistant.components.discovery import load_platform
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'intesishome'
@@ -40,7 +40,8 @@ def setup(hass, config):
     _pass = conf.get(CONF_PASSWORD)
 
     controller = IntesisHome(_user,_pass, hass.loop)
-    controller.poll_status()
+    controller.poll_status(False)
+    load_platform(hass, 'climate', DOMAIN)
     return True
 
 def stop_intesishome():
