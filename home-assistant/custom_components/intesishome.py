@@ -5,14 +5,12 @@ For more details about this component, please refer to the documentation at
 https://home-assistant.io/components/intesishome/
 """
 import logging
-import os
-import time
-from datetime import timedelta
+# from datetime import timedelta
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
 from homeassistant.const import (CONF_PASSWORD, CONF_USERNAME, CONF_STRUCTURE)
-from homeassistant.util import Throttle
-from homeassistant.components.discovery import load_platform
+# from homeassistant.util import Throttle
+# from homeassistant.components.discovery import load_platform
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'intesishome'
@@ -20,7 +18,7 @@ REQUIREMENTS = ['pyintesishome==0.2']
 
 controller = None
 
-MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
+# MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
@@ -36,7 +34,6 @@ def setup(hass, config):
     """Setup IntesisHome platform."""
     global controller
     from pyintesishome import IntesisHome
-    from pydispatch import dispatcher
 
     conf = config[DOMAIN]
     _user = conf.get(CONF_USERNAME)
