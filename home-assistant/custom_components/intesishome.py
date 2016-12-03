@@ -17,7 +17,7 @@ DOMAIN = 'intesishome'
 REQUIREMENTS = ['pyintesishome==0.2']
 
 controller = None
-
+    
 # MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
 CONFIG_SCHEMA = vol.Schema({
@@ -40,7 +40,7 @@ def setup(hass, config):
     _pass = conf.get(CONF_PASSWORD)
 
     controller = IntesisHome(_user,_pass, hass.loop)
-    controller.poll_status(False)
+    controller.connect()
     load_platform(hass, 'climate', DOMAIN)
     return True
 
