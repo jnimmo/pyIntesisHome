@@ -14,7 +14,7 @@ from homeassistant.components.discovery import load_platform
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'intesishome'
-REQUIREMENTS = ['pyintesishome==0.2']
+REQUIREMENTS = ['pyintesishome==0.3']
 
 controller = None
     
