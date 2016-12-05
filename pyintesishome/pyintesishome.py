@@ -189,7 +189,8 @@ class IntesisHome():
 
     def get_run_hours(self, deviceid):
         """Public method returns the run hours of the IntesisHome controller"""
-        return self._devices[str(deviceid)]['working_hours']
+        run_hours = self._devices[str(deviceid)].get('working_hours')
+        return run_hours
 
     def _set_mode(self, deviceId, mode):
         """Internal method for setting the mode with a string value"""
