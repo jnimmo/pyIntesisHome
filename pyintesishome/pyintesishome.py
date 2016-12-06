@@ -23,6 +23,8 @@ INTESIS_MAP = {
     1: {'name': 'power', 'values': {0: 'off', 1: 'on'}},
     2: {'name': 'mode', 'values': {0: 'auto', 1: 'heat', 2: 'dry', 3: 'fan', 4: 'cool'}},
     4: {'name': 'fan_speed', 'values': {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high"}},
+    5: {'name': 'vvane', 'values': {0: "auto/stop", 10: "swing", 1: "manual1", 2: "manual2", 3: "manual3", 4: "manual4", 5: "manual5"}},
+    6: {'name': 'hvane', 'values': {0: "auto/stop", 10: "swing", 1: "manual1", 2: "manual2", 3: "manual3", 4: "manual4", 5: "manual5"}},
     9: {'name': 'setpoint', 'null': 32768},
     10: {'name': 'temperature'},
     13: {'name': 'working_hours'},
@@ -34,6 +36,8 @@ COMMAND_MAP = {
     'power': {'uid': 1, 'values': {'off':0, 'on':1}},
     'mode': {'uid': 2, 'values': {'auto':0,'heat':1,"dry":2,"fan":3,"cool":4}},
     'fan_speed': {'uid': 4, 'values': {'auto':0,'quiet':1,"low":2,"medium":3,"high":4}},
+    'vvane': {'uid': 5, 'values': {'auto/stop':0,'swing':10,"manual1":1,"manual2":2,"manual3":3,"manual4":4,"manual5":5}},
+    'hvane': {'uid': 6, 'values': {'auto/stop':0,'swing':10,"manual1":1,"manual2":2,"manual3":3,"manual4":4,"manual5":5}},
     'setpoint': {'uid': 9}
 }
 
@@ -218,6 +222,15 @@ class IntesisHome():
         self._send_command(msg)
         self._devices[str(deviceId)]['power'] = power
 
+    def set_vane_pos(self, deviceId, vane):
+        """Public method to set the vertical and horizontal vanes"""
+        msg = '{"command":"set","data":{"deviceId":%s,"value":%s,"uid":%s,"seqNo":0}}' % (deviceId, COMMAND_MAP['vvane']['values'][vane], COMMAND_MAP['vvane']['uid'])
+        self._send_command(msg)
+        self._devices[str(deviceId)]['vvane'] = vane
+        msg = '{"command":"set","data":{"deviceId":%s,"value":%s,"uid":%s,"seqNo":0}}' % (deviceId, COMMAND_MAP['hvane']['values'][vane], COMMAND_MAP['hvane']['uid'])
+        self._send_command(msg)
+        self._devices[str(deviceId)]['hvane'] = vane
+
     def _send_command(self, message):
         """Internal method to send a command to the API (and connect if necessary)"""
         if self._connectionStatus == API_AUTHENTICATED:
@@ -287,7 +300,7 @@ class IntesisHome():
     def set_power_on(self, deviceId):
         """Public method to turn on the device asynchronously."""
         self._set_power(deviceId, 'on')
-
+    
     def get_mode(self, deviceId):
         """Public method returns the current mode of operation."""
         return self._devices[str(deviceId)].get('mode')
@@ -331,6 +344,12 @@ class IntesisHome():
     def get_rssi(self, deviceid):
         """Public method returns the current wireless signal strength."""
         rssi = self._devices[str(deviceid)].get('rssi')
+        return rssi
+
+    def get_vane(self, deviceid):
+        """Public method returns the current vertical vane setting."""
+        """We can only display a single vane position so using vertical vane setting."""
+        rssi = self._devices[str(deviceid)].get('vvane')
         return rssi
 
     def _send_update_callback(self):

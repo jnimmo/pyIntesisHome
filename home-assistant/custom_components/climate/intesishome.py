@@ -64,9 +64,11 @@ class IntesisAC(ClimateDevice):
         self._power = STATE_UNKNOWN
         self._fan_speed = STATE_UNKNOWN
         self._current_operation = STATE_UNKNOWN
+        self._vvane = STATE_UNKNOWN
 
         self._operation_list = [STATE_AUTO, STATE_COOL, STATE_DRY, STATE_OFF, STATE_HEAT, STATE_FAN]
         self._fan_list = ["Auto","Quiet","Low","Medium","High"]
+        self._swing_list = ["Auto/Stop","Swing","Middle"]
 
         #
         intesishome.controller.add_callback(self.update_callback)
@@ -126,6 +128,7 @@ class IntesisAC(ClimateDevice):
             if self._target_temp:
                 intesishome.controller.set_temperature(self._deviceid, self._target_temp)
             self.set_fan_mode(self._fan_speed)
+            self.set_swing_mode(self._vvane)
 
 
     def set_fan_mode(self, fan):
@@ -140,6 +143,15 @@ class IntesisAC(ClimateDevice):
             intesishome.controller.set_fan_speed(self._deviceid, 'medium')
         elif fan == "High":
             intesishome.controller.set_fan_speed(self._deviceid, 'high')
+
+    def set_swing_mode(self, vvane):
+        """Set the vertical vane."""
+        if vvane == "Auto/Stop":
+            intesishome.controller.set_vane_pos(self._deviceid, 'auto/stop')
+        elif vvane == "Swing":
+            intesishome.controller.set_vane_pos(self._deviceid, 'swing')
+        elif vvane == "Middle":
+            intesishome.controller.set_vane_pos(self._deviceid, 'manual3')
 
     def update(self):
         if intesishome.controller.is_disconnected:
@@ -183,6 +195,16 @@ class IntesisAC(ClimateDevice):
             self._fan_speed = "High"
         else:
             self._fan_speed = STATE_UNKNOWN
+
+        vvane = intesishome.controller.get_vane(self._deviceid)
+        if vvane == 'auto/stop':
+            self._vvane = "Auto/Stop"
+        elif vvane == 'swing':
+            self._vvane = "Swing"
+        elif vvane == 'manual3':
+            self._vvane = "Middle"
+        else:
+            self._vvane = STATE_UNKNOWN
 
         self._rssi = intesishome.controller.get_rssi(self._deviceid)
 
@@ -241,11 +263,20 @@ class IntesisAC(ClimateDevice):
         """Return whether the fan is on."""
         return self._fan_speed
 
+    @property
+    def current_swing_mode(self):
+        """Return vvane position"""
+        return self._vvane
 
     @property
     def fan_list(self):
         """List of available fan modes."""
         return self._fan_list
+
+    @property
+    def swing_list(self):
+        """List of available vvane positions."""
+        return self._swing_list
 
     @property
     def current_temperature(self):
