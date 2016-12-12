@@ -11,12 +11,14 @@ import homeassistant.helpers.config_validation as cv
 from homeassistant.const import (CONF_PASSWORD, CONF_USERNAME, CONF_STRUCTURE)
 # from homeassistant.util import Throttle
 from homeassistant.components.discovery import load_platform
+from homeassistant.components import persistent_notification
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'intesishome'
-REQUIREMENTS = ['pyintesishome==0.3']
+REQUIREMENTS = ['pyintesishome==0.4']
 
 controller = None
+hass = None
     
 # MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
@@ -39,10 +41,17 @@ def setup(hass, config):
     _user = conf.get(CONF_USERNAME)
     _pass = conf.get(CONF_PASSWORD)
 
-    controller = IntesisHome(_user,_pass, hass.loop)
-    controller.connect()
+    if controller is None:
+        controller = IntesisHome(_user,_pass, hass.loop)
+        controller.connect()
+
     load_platform(hass, 'climate', DOMAIN)
+
+    if controller.error_message:
+        persistent_notification.create(hass, controller.error_message, "IntesisHome Error", 'intesishome')
+
     return True
+
 
 def stop_intesishome():
     controller.stop()
@@ -50,5 +59,7 @@ def stop_intesishome():
 
 def get_devices():
     return controller.get_devices()
+
+
 
 

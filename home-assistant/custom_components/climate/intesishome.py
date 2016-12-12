@@ -9,16 +9,25 @@ import voluptuous as vol
 from custom_components import intesishome
 from homeassistant.util import Throttle
 from datetime import timedelta
-from homeassistant.components.climate import (
-    STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY, STATE_FAN_ONLY, ClimateDevice,
+from homeassistant.components.climate import ( ClimateDevice,
     PLATFORM_SCHEMA, ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
     ATTR_TEMPERATURE)
 from homeassistant.const import (
-    TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_ON, STATE_OFF, STATE_UNKNOWN)
+    TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_UNKNOWN)
 
 DEPENDENCIES = ['intesishome']
 _LOGGER = logging.getLogger(__name__)
-STATE_FAN = 'fan'
+STATE_FAN = 'Fan'
+STATE_HEAT = 'Heat'
+STATE_COOL = 'Cool'
+STATE_DRY = 'Dry'
+STATE_AUTO = 'Auto'
+STATE_OFF = 'Off'
+STATE_QUIET = 'Quiet'
+STATE_LOW = 'Low'
+STATE_MEDIUM = 'Medium'
+STATE_HIGH = 'High'
+
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_SCAN_INTERVAL):
@@ -27,7 +36,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 
 # Return cached results if last scan time was less than this value.
 # If a persistent connection is established for the controller, changes to values are in realtime.
-MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=120)
+MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
 
 try:
@@ -60,18 +69,22 @@ class IntesisAC(ClimateDevice):
         self._current_temp = None
         self._run_hours = None
         self._rssi = None
+        self._swing = None
+        self._has_swing_control = False
 
         self._power = STATE_UNKNOWN
         self._fan_speed = STATE_UNKNOWN
         self._current_operation = STATE_UNKNOWN
-        self._vvane = STATE_UNKNOWN
 
-        self._operation_list = [STATE_AUTO, STATE_COOL, STATE_DRY, STATE_OFF, STATE_HEAT, STATE_FAN]
-        self._fan_list = ["Auto","Quiet","Low","Medium","High"]
+        self._operation_list = [STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY, STATE_FAN, STATE_OFF]
+        self._fan_list = [STATE_AUTO, STATE_QUIET, STATE_LOW, STATE_MEDIUM, STATE_HIGH]
         self._swing_list = ["Auto/Stop","Swing","Middle"]
 
-        #
-        intesishome.controller.add_callback(self.update_callback)
+        # Best guess as which widget represents vertical swing control
+        if 42 in device.get('widgets'):
+            self._has_swing_control = True
+
+        intesishome.controller.add_update_callback(self.update_callback)
         self.update()
 
     @property
@@ -87,14 +100,18 @@ class IntesisAC(ClimateDevice):
     @property
     def device_state_attributes(self):
         """Return the device specific state attributes."""
+        if intesishome.controller.is_connected:
+            update_type = 'Push'
+        else:
+            update_type = 'Poll'
+
         return {
             "run_hours": self._run_hours,
             "rssi": self._rssi,
             "temperature": self._target_temp,
-            "current_temperature": self._current_temp
+            "current_temperature": self._current_temp,
+            "ha_update_type": update_type,
         }
-
-
 
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
@@ -107,7 +124,7 @@ class IntesisAC(ClimateDevice):
     def set_operation_mode(self, operation_mode):
         """Set operation mode."""
         _LOGGER.debug("IntesisHome Set Mode=%s", operation_mode)
-        if operation_mode == STATE_OFF:
+        if operation_mode == "Off":
             intesishome.controller.set_power_off(self._deviceid)
         else:
             if intesishome.controller.get_power_state(self._deviceid) == 'off':
@@ -125,94 +142,88 @@ class IntesisAC(ClimateDevice):
             elif operation_mode == STATE_DRY:
                 intesishome.controller.set_mode_dry(self._deviceid)
 
-            if self._target_temp:
-                intesishome.controller.set_temperature(self._deviceid, self._target_temp)
-            self.set_fan_mode(self._fan_speed)
-            self.set_swing_mode(self._vvane)
+        if self._target_temp:
+            intesishome.controller.set_temperature(self._deviceid, self._target_temp)
 
 
     def set_fan_mode(self, fan):
-        """Turn fan on/off."""
-        if fan == "Auto":
-            intesishome.controller.set_fan_speed(self._deviceid, 'auto')
-        elif fan == "Quiet":
-            intesishome.controller.set_fan_speed(self._deviceid, 'quiet')
-        elif fan == "Low":
-            intesishome.controller.set_fan_speed(self._deviceid, 'low')
-        elif fan == "Medium":
-            intesishome.controller.set_fan_speed(self._deviceid, 'medium')
-        elif fan == "High":
-            intesishome.controller.set_fan_speed(self._deviceid, 'high')
+        """Set fan mode (from quiet, low, medium, high, auto)"""
+        intesishome.controller.set_fan_speed(self._deviceid, fan.lower())
 
-    def set_swing_mode(self, vvane):
+    def set_swing_mode(self, swing):
         """Set the vertical vane."""
-        if vvane == "Auto/Stop":
-            intesishome.controller.set_vane_pos(self._deviceid, 'auto/stop')
-        elif vvane == "Swing":
-            intesishome.controller.set_vane_pos(self._deviceid, 'swing')
-        elif vvane == "Middle":
-            intesishome.controller.set_vane_pos(self._deviceid, 'manual3')
+        if swing == "Auto/Stop":
+            intesishome.controller.set_vertical_vane(self._deviceid, 'auto/stop')
+            intesishome.controller.set_horizontal_vane(self._deviceid, 'auto/stop')
+        elif swing == "Swing":
+            intesishome.controller.set_vertical_vane(self._deviceid, 'swing')
+            intesishome.controller.set_horizontal_vane(self._deviceid, 'swing')
+        elif swing == "Middle":
+            intesishome.controller.set_vertical_vane(self._deviceid, 'manual3')
+            intesishome.controller.set_horizontal_vane(self._deviceid, 'swing')
+
 
     def update(self):
         if intesishome.controller.is_disconnected:
             self._poll_status(False)
 
-        self._target_temp = intesishome.controller.get_setpoint(self._deviceid)
         self._current_temp = intesishome.controller.get_temperature(self._deviceid)
         self._min_temp = intesishome.controller.get_min_setpoint(self._deviceid)
         self._max_temp = intesishome.controller.get_max_setpoint(self._deviceid)
+        self._rssi = intesishome.controller.get_rssi(self._deviceid)
+        self._run_hours = intesishome.controller.get_run_hours(self._deviceid)
 
+        # Operation mode
         mode = intesishome.controller.get_mode(self._deviceid)
         if intesishome.controller.get_power_state(self._deviceid) == 'off':
-            self._current_operation = STATE_OFF
-            self._target_temp = None
-        elif mode == 'cool':
-            self._current_operation = STATE_COOL
-        elif mode == 'heat':
-            self._current_operation = STATE_HEAT
+            self._current_operation = 'Off'
+            self._fan_speed = None
+            self._swing = None
         elif mode == 'auto':
             self._current_operation = STATE_AUTO
-        elif mode == 'dry':
-            self._current_operation = STATE_DRY
         elif mode == 'fan':
             self._current_operation = STATE_FAN
-            self._target_temp = None
+        elif mode == 'heat':
+            self._current_operation = STATE_HEAT
+        elif mode == 'dry':
+            self._current_operation = STATE_DRY
+        elif mode == 'cool':
+            self._current_operation = STATE_COOL
         else:
             self._current_operation = STATE_UNKNOWN
 
-        self._run_hours = intesishome.controller.get_run_hours(self._deviceid)
+        # Target temperature
+        if self._current_operation in [STATE_OFF,STATE_FAN]:
+            self._target_temp = None
+        else:
+            self._target_temp = intesishome.controller.get_setpoint(self._deviceid)
 
+        # Fan speed
         fan_speed = intesishome.controller.get_fan_speed(self._deviceid)
-        if fan_speed == 'auto':
-            self._fan_speed = "Auto"
-        elif fan_speed == 'quiet':
-            self._fan_speed = "Quiet"
-        elif fan_speed == 'low':
-            self._fan_speed = "Low"
-        elif fan_speed == 'medium':
-            self._fan_speed = "Medium"
-        elif fan_speed == 'high':
-            self._fan_speed = "High"
-        else:
-            self._fan_speed = STATE_UNKNOWN
+        if fan_speed:
+            # Capitalize fan speed from pyintesishome
+            self._fan_speed = fan_speed[:1].upper() + fan_speed[1:]
 
-        vvane = intesishome.controller.get_vane(self._deviceid)
-        if vvane == 'auto/stop':
-            self._vvane = "Auto/Stop"
-        elif vvane == 'swing':
-            self._vvane = "Swing"
-        elif vvane == 'manual3':
-            self._vvane = "Middle"
+        # Swing mode
+        # Climate module only supports one swing setting, so use vertical swing
+        swing = intesishome.controller.get_vertical_swing(self._deviceid)
+        if not self._has_swing_control:
+            # Device doesn't support swing
+            self._swing = None
+        elif swing == 'auto/stop':
+            self._swing = "Auto/Stop"
+        elif swing == 'swing':
+            self._swing = "Swing"
+        elif swing == 'manual3':
+            self._swing = "Middle"
         else:
-            self._vvane = STATE_UNKNOWN
+            self._swing = STATE_UNKNOWN
 
-        self._rssi = intesishome.controller.get_rssi(self._deviceid)
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def _poll_status(self, shouldCallback):
         _LOGGER.info("Polling IntesisHome Status via HTTP")
         intesishome.controller.poll_status(shouldCallback)
-
 
 
     @property
@@ -265,8 +276,8 @@ class IntesisAC(ClimateDevice):
 
     @property
     def current_swing_mode(self):
-        """Return vvane position"""
-        return self._vvane
+        """Return current swing mode."""
+        return self._swing
 
     @property
     def fan_list(self):
@@ -275,7 +286,7 @@ class IntesisAC(ClimateDevice):
 
     @property
     def swing_list(self):
-        """List of available vvane positions."""
+        """List of available swing positions."""
         return self._swing_list
 
     @property
