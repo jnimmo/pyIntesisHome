@@ -21,3 +21,15 @@ controller.set_mode_heat('12015601252591')
 controller.set_temperature('12015601252591', 22)
 controller.set_fan_speed('12015601252591','quiet')
 ```
+## Control methods
+
+ - set_mode_heat(deviceID)
+ - set_mode_cool(deviceID)
+ - set_mode_fan(deviceID)
+ - set_mode_dry(deviceID)
+ - set_mode_auto(deviceID)
+ - set_temperature(deviceID, temperature)
+ - set_fan_speed(deviceID, 'quiet' | 'low' | 'medium' | 'high' | 'auto')
+ - set_power_on(deviceID)
+ - set_power_off(deviceID)
+ 
