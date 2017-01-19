@@ -276,14 +276,6 @@ class IntesisAC(ClimateDevice):
     def current_swing_mode(self):
         """Return current swing mode."""
         return self._swing
-        
-    @property
-    def fan(self):
-        """Return the current fan state."""
-        if self._current_operation in [STATE_AUTO,STATE_FAN,STATE_HEAT,STATE_COOL,STATE_DRY]:
-            return STATE_ON
-        else:
-        	return STATE_OFF
         	
     @property
     def fan_list(self):
