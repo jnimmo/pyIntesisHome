@@ -12,8 +12,7 @@ from datetime import timedelta
 from homeassistant.components.climate import ( ClimateDevice,
     PLATFORM_SCHEMA, ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
     ATTR_TEMPERATURE)
-from homeassistant.const import (
-    TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_UNKNOWN)
+from homeassistant.const import (TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_UNKNOWN)
 
 DEPENDENCIES = ['intesishome']
 _LOGGER = logging.getLogger(__name__)
@@ -22,11 +21,11 @@ STATE_HEAT = 'Heat'
 STATE_COOL = 'Cool'
 STATE_DRY = 'Dry'
 STATE_AUTO = 'Auto'
-STATE_OFF = 'Off'
 STATE_QUIET = 'Quiet'
 STATE_LOW = 'Low'
 STATE_MEDIUM = 'Medium'
 STATE_HIGH = 'High'
+STATE_OFF = 'Off'
 
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
@@ -50,18 +49,16 @@ except ImportError:
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the Nest thermostat."""
-    temp_unit = hass.config.units.temperature_unit
-    add_devices([IntesisAC(deviceid, device, temp_unit)
+    add_devices([IntesisAC(deviceid, device)
                  for deviceid, device in intesishome.get_devices().items()])
 
 class IntesisAC(ClimateDevice):
-    def __init__(self, deviceid, device, temp_unit):
+    def __init__(self, deviceid, device):
         """Initialize the thermostat"""
         _LOGGER.info('Added climate device with state: %s',repr(device))
 
         self._deviceid = deviceid
         self._devicename = device['name']
-        self._unit = temp_unit
 
         self._max_temp = None
         self._min_temp = None
@@ -94,7 +91,7 @@ class IntesisAC(ClimateDevice):
 
     @property
     def temperature_unit(self):
-        """Return the unit of measurement."""
+        """IntesisHome API uses Celsius on the backend - let Home Assistant convert"""
         return TEMP_CELSIUS
 
     @property
@@ -109,7 +106,6 @@ class IntesisAC(ClimateDevice):
             "run_hours": self._run_hours,
             "rssi": self._rssi,
             "temperature": self._target_temp,
-            "current_temperature": self._current_temp,
             "ha_update_type": update_type,
         }
 
@@ -124,7 +120,7 @@ class IntesisAC(ClimateDevice):
     def set_operation_mode(self, operation_mode):
         """Set operation mode."""
         _LOGGER.debug("IntesisHome Set Mode=%s", operation_mode)
-        if operation_mode == "Off":
+        if operation_mode == STATE_OFF:
             intesishome.controller.set_power_off(self._deviceid)
         else:
             if intesishome.controller.get_power_state(self._deviceid) == 'off':
@@ -141,9 +137,11 @@ class IntesisAC(ClimateDevice):
                 self._target_temp = None
             elif operation_mode == STATE_DRY:
                 intesishome.controller.set_mode_dry(self._deviceid)
+            
+            if self._target_temp:
+                intesishome.controller.set_temperature(self._deviceid, self._target_temp)
 
-        if self._target_temp:
-            intesishome.controller.set_temperature(self._deviceid, self._target_temp)
+
 
 
     def set_fan_mode(self, fan):
@@ -176,7 +174,7 @@ class IntesisAC(ClimateDevice):
         # Operation mode
         mode = intesishome.controller.get_mode(self._deviceid)
         if intesishome.controller.get_power_state(self._deviceid) == 'off':
-            self._current_operation = 'Off'
+            self._current_operation = STATE_OFF
             self._fan_speed = None
             self._swing = None
         elif mode == 'auto':
@@ -278,7 +276,15 @@ class IntesisAC(ClimateDevice):
     def current_swing_mode(self):
         """Return current swing mode."""
         return self._swing
-
+        
+    @property
+    def fan(self):
+        """Return the current fan state."""
+        if self._current_operation in [STATE_AUTO,STATE_FAN,STATE_HEAT,STATE_COOL,STATE_DRY]:
+            return STATE_ON
+        else:
+        	return STATE_OFF
+        	
     @property
     def fan_list(self):
         """List of available fan modes."""
