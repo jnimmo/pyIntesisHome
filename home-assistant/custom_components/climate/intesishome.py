@@ -11,7 +11,7 @@ from homeassistant.util import Throttle
 from datetime import timedelta
 from homeassistant.components.climate import ( ClimateDevice,
     PLATFORM_SCHEMA, ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
-    ATTR_TEMPERATURE)
+    ATTR_TEMPERATURE, ATTR_OPERATION_MODE)
 from homeassistant.const import (TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_UNKNOWN)
 
 DEPENDENCIES = ['intesishome']
@@ -114,8 +114,15 @@ class IntesisAC(ClimateDevice):
         _LOGGER.debug("IntesisHome Set Temperature=%s")
 
         temperature = kwargs.get(ATTR_TEMPERATURE)
-        if temperature:
-            intesishome.controller.set_temperature(self._deviceid, temperature)
+        operation_mode = kwargs.get(ATTR_OPERATION_MODE)
+        
+        if operation_mode:
+            self._target_temp = temperature
+            self.set_operation_mode(operation_mode)
+        else:
+            if temperature:
+                intesishome.controller.set_temperature(self._deviceid, temperature)
+        
 
     def set_operation_mode(self, operation_mode):
         """Set operation mode."""
