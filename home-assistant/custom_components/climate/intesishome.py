@@ -11,7 +11,9 @@ from homeassistant.util import Throttle
 from datetime import timedelta
 from homeassistant.components.climate import ( ClimateDevice,
     PLATFORM_SCHEMA, ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
-    ATTR_TEMPERATURE, ATTR_OPERATION_MODE)
+    ATTR_TEMPERATURE, ATTR_OPERATION_MODE, SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW,
+    SUPPORT_OPERATION_MODE, SUPPORT_AWAY_MODE, SUPPORT_FAN_MODE)
 from homeassistant.const import (TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_UNKNOWN)
 
 DEPENDENCIES = ['intesishome']
@@ -27,6 +29,9 @@ STATE_MEDIUM = 'Medium'
 STATE_HIGH = 'High'
 STATE_OFF = 'Off'
 
+SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_TARGET_TEMPERATURE_HIGH |
+                 SUPPORT_TARGET_TEMPERATURE_LOW | SUPPORT_OPERATION_MODE |
+                 SUPPORT_AWAY_MODE | SUPPORT_FAN_MODE)
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_SCAN_INTERVAL):
@@ -235,13 +240,13 @@ class IntesisAC(ClimateDevice):
     def icon(self):
         icon = None
         if self._current_operation == STATE_HEAT:
-            icon = 'mdi:white-balance-sunny'
+            icon = 'mdi:fire'
         elif self._current_operation == STATE_FAN:
             icon = 'mdi:fan'
         elif self._current_operation == STATE_DRY:
             icon = 'mdi:water-off'
         elif self._current_operation == STATE_COOL:
-            icon = 'mdi:nest-thermostat'
+            icon = 'mdi:snowflake'
         elif self._current_operation == STATE_AUTO:
             icon = 'mdi:cached'
         return icon
@@ -249,7 +254,7 @@ class IntesisAC(ClimateDevice):
     def update_callback(self):
         """Called when data is received by pyIntesishome"""
         _LOGGER.info("IntesisHome sent a status update.")
-        self.hass.async_add_job(self.update_ha_state,True)
+        self.hass.async_add_job(self.async_schedule_update_ha_state,True)
 
     @property
     def min_temp(self):
@@ -319,3 +324,8 @@ class IntesisAC(ClimateDevice):
     def is_away_mode_on(self):
         """Return if away mode is on."""
         return None
+    
+    @property
+    def supported_features(self):
+        """Return the list of supported features."""
+        return SUPPORT_FLAGS
