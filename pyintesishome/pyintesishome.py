@@ -51,10 +51,11 @@ try:
 except ImportError:
     # Python 3.4.3 and ealier has this as async
     # pylint: disable=unused-import
-    from asyncio import async
 
-    ensure_future = async
-
+    if hasattr(asyncio, 'ensure_future'):
+        ensure_future = asyncio.ensure_future
+    else:  # Deprecated since Python 3.4.4
+        ensure_future = getattr(asyncio, "async")
 
 class IntesisHome(asyncio.Protocol):
     def __init__(self, username, password, loop=None):
