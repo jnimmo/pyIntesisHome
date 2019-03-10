@@ -6,7 +6,7 @@ https://home-assistant.io/components/intesishome/
 """
 import logging
 import voluptuous as vol
-import intesishome
+
 
 from homeassistant.util import Throttle
 from datetime import timedelta
@@ -17,6 +17,8 @@ from homeassistant.components.climate.const import (
 from homeassistant.const import (
     ATTR_TEMPERATURE, TEMP_CELSIUS, CONF_SCAN_INTERVAL,
     STATE_UNKNOWN)
+
+from . import DATA_INTESISHOME
 
 DEPENDENCIES = ['intesishome']
 _LOGGER = logging.getLogger(__name__)
@@ -63,14 +65,15 @@ MAP_OPERATION_MODE = {
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the Nest thermostat."""
-    add_devices([IntesisAC(deviceid, device)
-                 for deviceid, device in intesishome.get_devices().items()])
+    add_devices([IntesisAC(deviceid, device, hass.data[DATA_INTESISHOME])
+                 for deviceid, device in hass.data[DATA_INTESISHOME].get_devices().items()])
 
 
 class IntesisAC(ClimateDevice):
-    def __init__(self, deviceid, device):
+    def __init__(self, deviceid, device, controller):
         """Initialize the thermostat"""
         _LOGGER.info('Added climate device with state: %s', repr(device))
+        self._controller = controller
 
         self._deviceid = deviceid
         self._devicename = device['name']
@@ -103,8 +106,9 @@ class IntesisAC(ClimateDevice):
             self._has_swing_control = True
             self._support |= SUPPORT_SWING_MODE
 
-        intesishome.controller.add_update_callback(self.update_callback)
+        self._controller.add_update_callback(self.update_callback)
         self.update()
+
 
     @property
     def name(self):
@@ -119,7 +123,7 @@ class IntesisAC(ClimateDevice):
     @property
     def device_state_attributes(self):
         """Return the device specific state attributes."""
-        if intesishome.controller.is_connected:
+        if self._controller.is_connected:
             update_type = 'Push'
         else:
             update_type = 'Poll'
@@ -143,37 +147,37 @@ class IntesisAC(ClimateDevice):
             self.set_operation_mode(operation_mode)
         else:
             if temperature:
-                intesishome.controller.set_temperature(
+                self._controller.set_temperature(
                     self._deviceid, temperature)
 
     def set_operation_mode(self, operation_mode):
         """Set operation mode."""
         _LOGGER.debug("IntesisHome Set Mode=%s", operation_mode)
         if operation_mode == STATE_OFF:
-            intesishome.controller.set_power_off(self._deviceid)
+            self._controller.set_power_off(self._deviceid)
         else:
-            if intesishome.controller.get_power_state(self._deviceid) == 'off':
-                intesishome.controller.set_power_on(self._deviceid)
+            if self._controller.get_power_state(self._deviceid) == 'off':
+                self._controller.set_power_on(self._deviceid)
 
             if operation_mode == STATE_HEAT:
-                intesishome.controller.set_mode_heat(self._deviceid)
+                self._controller.set_mode_heat(self._deviceid)
             elif operation_mode == STATE_COOL:
-                intesishome.controller.set_mode_cool(self._deviceid)
+                self._controller.set_mode_cool(self._deviceid)
             elif operation_mode == STATE_AUTO:
-                intesishome.controller.set_mode_auto(self._deviceid)
+                self._controller.set_mode_auto(self._deviceid)
             elif operation_mode == STATE_FAN:
-                intesishome.controller.set_mode_fan(self._deviceid)
+                self._controller.set_mode_fan(self._deviceid)
                 self._target_temp = None
             elif operation_mode == STATE_DRY:
-                intesishome.controller.set_mode_dry(self._deviceid)
+                self._controller.set_mode_dry(self._deviceid)
 
             if self._target_temp:
-                intesishome.controller.set_temperature(
+                self._controller.set_temperature(
                     self._deviceid, self._target_temp)
 
     def turn_on(self):
         """Turn thermostat on."""
-        intesishome.controller.set_power_on(self._deviceid)
+        self._controller.set_power_on(self._deviceid)
         self.hass.async_add_job(self.schedule_update_ha_state, True)
 
     def turn_off(self):
@@ -182,42 +186,42 @@ class IntesisAC(ClimateDevice):
 
     def set_fan_mode(self, fan):
         """Set fan mode (from quiet, low, medium, high, auto)"""
-        intesishome.controller.set_fan_speed(self._deviceid, fan.lower())
+        self._controller.set_fan_speed(self._deviceid, fan.lower())
 
     def set_swing_mode(self, swing):
         """Set the vertical vane."""
         if swing == "Auto/Stop":
-            intesishome.controller.set_vertical_vane(self._deviceid, 'auto/stop')
-            intesishome.controller.set_horizontal_vane(self._deviceid, 'auto/stop')
+            self._controller.set_vertical_vane(self._deviceid, 'auto/stop')
+            self._controller.set_horizontal_vane(self._deviceid, 'auto/stop')
         elif swing == "Swing":
-            intesishome.controller.set_vertical_vane(self._deviceid, 'swing')
-            intesishome.controller.set_horizontal_vane(self._deviceid, 'swing')
+            self._controller.set_vertical_vane(self._deviceid, 'swing')
+            self._controller.set_horizontal_vane(self._deviceid, 'swing')
         elif swing == "Middle":
-            intesishome.controller.set_vertical_vane(self._deviceid, 'manual3')
-            intesishome.controller.set_horizontal_vane(self._deviceid, 'swing')
+            self._controller.set_vertical_vane(self._deviceid, 'manual3')
+            self._controller.set_horizontal_vane(self._deviceid, 'swing')
 
     def update(self):
-        if intesishome.controller.is_disconnected:
+        if self._controller.is_disconnected:
             self._poll_status(False)
 
-        self._current_temp = intesishome.controller.get_temperature(self._deviceid)
-        self._min_temp = intesishome.controller.get_min_setpoint(self._deviceid)
-        self._max_temp = intesishome.controller.get_max_setpoint(self._deviceid)
-        self._rssi = intesishome.controller.get_rssi(self._deviceid)
-        self._run_hours = intesishome.controller.get_run_hours(self._deviceid)
+        self._current_temp = self._controller.get_temperature(self._deviceid)
+        self._min_temp = self._controller.get_min_setpoint(self._deviceid)
+        self._max_temp = self._controller.get_max_setpoint(self._deviceid)
+        self._rssi = self._controller.get_rssi(self._deviceid)
+        self._run_hours = self._controller.get_run_hours(self._deviceid)
 
         # Operation mode
-        mode = intesishome.controller.get_mode(self._deviceid)
+        mode = self._controller.get_mode(self._deviceid)
         self._current_operation = MAP_OPERATION_MODE.get(mode, STATE_UNKNOWN)
 
         # Target temperature
         if self._current_operation in [STATE_OFF, STATE_FAN]:
             self._target_temp = None
         else:
-            self._target_temp = intesishome.controller.get_setpoint(self._deviceid)
+            self._target_temp = self._controller.get_setpoint(self._deviceid)
 
         # Fan speed
-        fan_speed = intesishome.controller.get_fan_speed(self._deviceid)
+        fan_speed = self._controller.get_fan_speed(self._deviceid)
         if fan_speed:
             # Capitalize fan speed from pyintesishome
             self._fan_speed = fan_speed[:1].upper() + fan_speed[1:]
@@ -225,13 +229,13 @@ class IntesisAC(ClimateDevice):
         # Swing mode
         # Climate module only supports one swing setting, so use vertical swing
         if self._has_swing_control:
-            swing = intesishome.controller.get_vertical_swing(self._deviceid)
+            swing = self._controller.get_vertical_swing(self._deviceid)
             self._swing = MAP_SWING_MODE.get(swing, STATE_UNKNOWN)
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def _poll_status(self, shouldCallback):
         _LOGGER.info("Polling IntesisHome Status via HTTP")
-        intesishome.controller.poll_status(shouldCallback)
+        self._controller.poll_status(shouldCallback)
 
     @property
     def icon(self):
@@ -266,7 +270,7 @@ class IntesisAC(ClimateDevice):
     @property
     def should_poll(self):
         """Poll for updates if pyIntesisHome doesn't have a socket open"""
-        if intesishome.controller.is_connected:
+        if self._controller.is_connected:
             return False
         else:
             return True
@@ -318,4 +322,6 @@ class IntesisAC(ClimateDevice):
     @property
     def supported_features(self):
         """Return the list of supported features."""
-        self._support
+        return self._support
+
+
