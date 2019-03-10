@@ -8,8 +8,7 @@ import queue
 import sys
 from optparse import OptionParser
 
-_LOGGER = logging.getLogger(__name__)
-_LOGGER.setLevel(logging.DEBUG)
+_LOGGER = logging.getLogger('pyintesishome')
 
 INTESIS_URL = "https://user.intesishome.com/api.php/get/control"
 INTESIS_CMD_STATUS = '{"status":{"hash":"x"},"config":{"hash":"x"}}'

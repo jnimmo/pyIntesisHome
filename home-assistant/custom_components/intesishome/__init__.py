@@ -16,7 +16,7 @@ from homeassistant.components import persistent_notification
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'intesishome'
 DATA_INTESISHOME = 'intesishome'
-REQUIREMENTS = ['pyintesishome==0.5']
+REQUIREMENTS = ['pyintesishome==0.6']
 
 controller = None
 hass = None
