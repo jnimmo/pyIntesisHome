@@ -7,14 +7,16 @@ https://home-assistant.io/components/intesishome/
 import logging
 import voluptuous as vol
 import intesishome
+
 from homeassistant.util import Throttle
 from datetime import timedelta
-from homeassistant.components.climate import ( ClimateDevice,
-    PLATFORM_SCHEMA, ATTR_TARGET_TEMP_HIGH, ATTR_TARGET_TEMP_LOW,
-    ATTR_TEMPERATURE, ATTR_OPERATION_MODE, SUPPORT_TARGET_TEMPERATURE,
-    SUPPORT_TARGET_TEMPERATURE_HIGH, SUPPORT_TARGET_TEMPERATURE_LOW,
-    SUPPORT_OPERATION_MODE, SUPPORT_AWAY_MODE, SUPPORT_FAN_MODE)
-from homeassistant.const import (TEMP_CELSIUS, CONF_SCAN_INTERVAL, STATE_UNKNOWN)
+from homeassistant.components.climate import ClimateDevice, PLATFORM_SCHEMA
+from homeassistant.components.climate.const import (
+    ATTR_OPERATION_MODE, SUPPORT_TARGET_TEMPERATURE,
+    SUPPORT_OPERATION_MODE, SUPPORT_FAN_MODE, SUPPORT_SWING_MODE)
+from homeassistant.const import (
+    ATTR_TEMPERATURE, TEMP_CELSIUS, CONF_SCAN_INTERVAL,
+    STATE_UNKNOWN)
 
 DEPENDENCIES = ['intesishome']
 _LOGGER = logging.getLogger(__name__)
@@ -29,9 +31,9 @@ STATE_MEDIUM = 'Medium'
 STATE_HIGH = 'High'
 STATE_OFF = 'Off'
 
-SUPPORT_FLAGS = (SUPPORT_TARGET_TEMPERATURE | SUPPORT_TARGET_TEMPERATURE_HIGH |
-                 SUPPORT_TARGET_TEMPERATURE_LOW | SUPPORT_OPERATION_MODE |
-                 SUPPORT_AWAY_MODE | SUPPORT_FAN_MODE)
+SWING_STOP = 'Auto/Stop'
+SWING_SWING = 'Swing'
+SWING_MIDDLE = 'Middle'
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_SCAN_INTERVAL):
@@ -39,21 +41,36 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 })
 
 # Return cached results if last scan time was less than this value.
-# If a persistent connection is established for the controller, changes to values are in realtime.
+# If a persistent connection is established for the controller, changes to
+# values are in realtime.
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
+MAP_SWING_MODE = {
+    'auto/stop': SWING_STOP,
+    'swing': SWING_SWING,
+    'manual3': SWING_MIDDLE
+}
 
-from asyncio import ensure_future
+MAP_OPERATION_MODE = {
+    'auto': STATE_AUTO,
+    'fan': STATE_FAN,
+    'heat': STATE_HEAT,
+    'dry': STATE_DRY,
+    'cool': STATE_COOL,
+    'off': STATE_OFF
+}
+
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the Nest thermostat."""
     add_devices([IntesisAC(deviceid, device)
                  for deviceid, device in intesishome.get_devices().items()])
 
+
 class IntesisAC(ClimateDevice):
     def __init__(self, deviceid, device):
         """Initialize the thermostat"""
-        _LOGGER.info('Added climate device with state: %s',repr(device))
+        _LOGGER.info('Added climate device with state: %s', repr(device))
 
         self._deviceid = deviceid
         self._devicename = device['name']
@@ -71,13 +88,20 @@ class IntesisAC(ClimateDevice):
         self._fan_speed = STATE_UNKNOWN
         self._current_operation = STATE_UNKNOWN
 
-        self._operation_list = [STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY, STATE_FAN, STATE_OFF]
-        self._fan_list = [STATE_AUTO, STATE_QUIET, STATE_LOW, STATE_MEDIUM, STATE_HIGH]
-        self._swing_list = ["Auto/Stop","Swing","Middle"]
+        self._operation_list = [STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY,
+                                STATE_FAN, STATE_OFF]
+        self._fan_list = [STATE_AUTO, STATE_QUIET, STATE_LOW, STATE_MEDIUM,
+                          STATE_HIGH]
+        self._swing_list = [SWING_STOP, SWING_SWING, SWING_MIDDLE]
+
+        self._support = (
+            SUPPORT_TARGET_TEMPERATURE | SUPPORT_OPERATION_MODE |
+            SUPPORT_FAN_MODE)
 
         # Best guess as which widget represents vertical swing control
         if 42 in device.get('widgets'):
             self._has_swing_control = True
+            self._support |= SUPPORT_SWING_MODE
 
         intesishome.controller.add_update_callback(self.update_callback)
         self.update()
@@ -89,7 +113,7 @@ class IntesisAC(ClimateDevice):
 
     @property
     def temperature_unit(self):
-        """IntesisHome API uses Celsius on the backend - let Home Assistant convert"""
+        """IntesisHome API uses Celsius on the backend"""
         return TEMP_CELSIUS
 
     @property
@@ -113,14 +137,14 @@ class IntesisAC(ClimateDevice):
 
         temperature = kwargs.get(ATTR_TEMPERATURE)
         operation_mode = kwargs.get(ATTR_OPERATION_MODE)
-        
+
         if operation_mode:
             self._target_temp = temperature
             self.set_operation_mode(operation_mode)
         else:
             if temperature:
-                intesishome.controller.set_temperature(self._deviceid, temperature)
-        
+                intesishome.controller.set_temperature(
+                    self._deviceid, temperature)
 
     def set_operation_mode(self, operation_mode):
         """Set operation mode."""
@@ -142,12 +166,19 @@ class IntesisAC(ClimateDevice):
                 self._target_temp = None
             elif operation_mode == STATE_DRY:
                 intesishome.controller.set_mode_dry(self._deviceid)
-            
+
             if self._target_temp:
-                intesishome.controller.set_temperature(self._deviceid, self._target_temp)
+                intesishome.controller.set_temperature(
+                    self._deviceid, self._target_temp)
 
+    def turn_on(self):
+        """Turn thermostat on."""
+        intesishome.controller.set_power_on(self._deviceid)
+        self.hass.async_add_job(self.schedule_update_ha_state, True)
 
-
+    def turn_off(self):
+        """Turn thermostat off."""
+        self.set_operation_mode(STATE_OFF)
 
     def set_fan_mode(self, fan):
         """Set fan mode (from quiet, low, medium, high, auto)"""
@@ -165,7 +196,6 @@ class IntesisAC(ClimateDevice):
             intesishome.controller.set_vertical_vane(self._deviceid, 'manual3')
             intesishome.controller.set_horizontal_vane(self._deviceid, 'swing')
 
-
     def update(self):
         if intesishome.controller.is_disconnected:
             self._poll_status(False)
@@ -178,25 +208,10 @@ class IntesisAC(ClimateDevice):
 
         # Operation mode
         mode = intesishome.controller.get_mode(self._deviceid)
-        if intesishome.controller.get_power_state(self._deviceid) == 'off':
-            self._current_operation = STATE_OFF
-            self._fan_speed = None
-            self._swing = None
-        elif mode == 'auto':
-            self._current_operation = STATE_AUTO
-        elif mode == 'fan':
-            self._current_operation = STATE_FAN
-        elif mode == 'heat':
-            self._current_operation = STATE_HEAT
-        elif mode == 'dry':
-            self._current_operation = STATE_DRY
-        elif mode == 'cool':
-            self._current_operation = STATE_COOL
-        else:
-            self._current_operation = STATE_UNKNOWN
+        self._current_operation = MAP_OPERATION_MODE.get(mode, STATE_UNKNOWN)
 
         # Target temperature
-        if self._current_operation in [STATE_OFF,STATE_FAN]:
+        if self._current_operation in [STATE_OFF, STATE_FAN]:
             self._target_temp = None
         else:
             self._target_temp = intesishome.controller.get_setpoint(self._deviceid)
@@ -209,45 +224,34 @@ class IntesisAC(ClimateDevice):
 
         # Swing mode
         # Climate module only supports one swing setting, so use vertical swing
-        swing = intesishome.controller.get_vertical_swing(self._deviceid)
-        if not self._has_swing_control:
-            # Device doesn't support swing
-            self._swing = None
-        elif swing == 'auto/stop':
-            self._swing = "Auto/Stop"
-        elif swing == 'swing':
-            self._swing = "Swing"
-        elif swing == 'manual3':
-            self._swing = "Middle"
-        else:
-            self._swing = STATE_UNKNOWN
-
+        if self._has_swing_control:
+            swing = intesishome.controller.get_vertical_swing(self._deviceid)
+            self._swing = MAP_SWING_MODE.get(swing, STATE_UNKNOWN)
 
     @Throttle(MIN_TIME_BETWEEN_UPDATES)
     def _poll_status(self, shouldCallback):
         _LOGGER.info("Polling IntesisHome Status via HTTP")
         intesishome.controller.poll_status(shouldCallback)
 
-
     @property
     def icon(self):
         icon = None
-        if self._current_operation == STATE_HEAT:
-            icon = 'mdi:fire'
-        elif self._current_operation == STATE_FAN:
+        if self.current_operation == STATE_HEAT:
+            icon = 'mdi:white-balance-sunny'
+        elif self.current_operation == STATE_FAN:
             icon = 'mdi:fan'
-        elif self._current_operation == STATE_DRY:
+        elif self.current_operation == STATE_DRY:
             icon = 'mdi:water-off'
-        elif self._current_operation == STATE_COOL:
+        elif self.current_operation == STATE_COOL:
             icon = 'mdi:snowflake'
-        elif self._current_operation == STATE_AUTO:
+        elif self.current_operation == STATE_AUTO:
             icon = 'mdi:cached'
         return icon
 
     def update_callback(self):
         """Called when data is received by pyIntesishome"""
         _LOGGER.info("IntesisHome sent a status update.")
-        self.hass.async_add_job(self.async_schedule_update_ha_state,True)
+        self.hass.async_add_job(self.schedule_update_ha_state, True)
 
     @property
     def min_temp(self):
@@ -275,13 +279,16 @@ class IntesisAC(ClimateDevice):
     @property
     def current_fan_mode(self):
         """Return whether the fan is on."""
-        return self._fan_speed
+        if self._current_operation != STATE_OFF:
+            return self._fan_speed
+        else:
+            return None
 
     @property
     def current_swing_mode(self):
         """Return current swing mode."""
         return self._swing
-        	
+
     @property
     def fan_list(self):
         """List of available fan modes."""
@@ -303,22 +310,12 @@ class IntesisAC(ClimateDevice):
 
     @property
     def target_temperature(self):
-        return self._target_temp
+        if self._current_operation != STATE_OFF:
+            return self._target_temp
+        else:
+            return None
 
-    @property
-    def target_temperature_low(self):
-        return None
-
-    @property
-    def target_temperature_high(self):
-        return None
-
-    @property
-    def is_away_mode_on(self):
-        """Return if away mode is on."""
-        return None
-    
     @property
     def supported_features(self):
         """Return the list of supported features."""
-        return SUPPORT_FLAGS
+        self._support
