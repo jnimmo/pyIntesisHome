@@ -12,30 +12,17 @@ from homeassistant.util import Throttle
 from datetime import timedelta
 from homeassistant.components.climate import ClimateDevice, PLATFORM_SCHEMA
 from homeassistant.components.climate.const import (
-    ATTR_OPERATION_MODE, SUPPORT_TARGET_TEMPERATURE,
+    ATTR_OPERATION_MODE, STATE_HEAT, STATE_FAN_ONLY, STATE_COOL,
+    STATE_DRY, STATE_AUTO, SUPPORT_TARGET_TEMPERATURE,
     SUPPORT_OPERATION_MODE, SUPPORT_FAN_MODE, SUPPORT_SWING_MODE)
 from homeassistant.const import (
     ATTR_TEMPERATURE, TEMP_CELSIUS, CONF_SCAN_INTERVAL,
-    STATE_UNKNOWN)
+    STATE_UNKNOWN, STATE_OFF)
 
 from . import DATA_INTESISHOME
 
 DEPENDENCIES = ['intesishome']
 _LOGGER = logging.getLogger(__name__)
-STATE_FAN = 'Fan'
-STATE_HEAT = 'Heat'
-STATE_COOL = 'Cool'
-STATE_DRY = 'Dry'
-STATE_AUTO = 'Auto'
-STATE_QUIET = 'Quiet'
-STATE_LOW = 'Low'
-STATE_MEDIUM = 'Medium'
-STATE_HIGH = 'High'
-STATE_OFF = 'Off'
-
-SWING_STOP = 'Auto/Stop'
-SWING_SWING = 'Swing'
-SWING_MIDDLE = 'Middle'
 
 PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
     vol.Optional(CONF_SCAN_INTERVAL):
@@ -47,6 +34,15 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 # values are in realtime.
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
+STATE_QUIET = 'Quiet'
+STATE_LOW = 'Low'
+STATE_MEDIUM = 'Medium'
+STATE_HIGH = 'High'
+
+SWING_STOP = 'Auto/Stop'
+SWING_SWING = 'Swing'
+SWING_MIDDLE = 'Middle'
+
 MAP_SWING_MODE = {
     'auto/stop': SWING_STOP,
     'swing': SWING_SWING,
@@ -55,7 +51,7 @@ MAP_SWING_MODE = {
 
 MAP_OPERATION_MODE = {
     'auto': STATE_AUTO,
-    'fan': STATE_FAN,
+    'fan': STATE_FAN_ONLY,
     'heat': STATE_HEAT,
     'dry': STATE_DRY,
     'cool': STATE_COOL,
@@ -65,8 +61,9 @@ MAP_OPERATION_MODE = {
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the Nest thermostat."""
-    add_devices([IntesisAC(deviceid, device, hass.data[DATA_INTESISHOME])
-                 for deviceid, device in hass.data[DATA_INTESISHOME].get_devices().items()])
+    controller = hass.data[DATA_INTESISHOME]
+    add_devices([IntesisAC(deviceid, device, controller)
+                 for deviceid, device in controller.get_devices().items()])
 
 
 class IntesisAC(ClimateDevice):
@@ -92,7 +89,7 @@ class IntesisAC(ClimateDevice):
         self._current_operation = STATE_UNKNOWN
 
         self._operation_list = [STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY,
-                                STATE_FAN, STATE_OFF]
+                                STATE_FAN_ONLY, STATE_OFF]
         self._fan_list = [STATE_AUTO, STATE_QUIET, STATE_LOW, STATE_MEDIUM,
                           STATE_HIGH]
         self._swing_list = [SWING_STOP, SWING_SWING, SWING_MIDDLE]
@@ -108,7 +105,6 @@ class IntesisAC(ClimateDevice):
 
         self._controller.add_update_callback(self.update_callback)
         self.update()
-
 
     @property
     def name(self):
@@ -150,30 +146,32 @@ class IntesisAC(ClimateDevice):
                 self._controller.set_temperature(
                     self._deviceid, temperature)
 
-    def set_operation_mode(self, operation_mode):
+    def set_operation_mode(self, new_operation_mode):
         """Set operation mode."""
-        _LOGGER.debug("IntesisHome Set Mode=%s", operation_mode)
-        if operation_mode == STATE_OFF:
+        _LOGGER.debug("IntesisHome Set Mode=%s", new_operation_mode)
+        if new_operation_mode == STATE_OFF:
             self._controller.set_power_off(self._deviceid)
         else:
             if self._controller.get_power_state(self._deviceid) == 'off':
                 self._controller.set_power_on(self._deviceid)
 
-            if operation_mode == STATE_HEAT:
+            if new_operation_mode == STATE_HEAT:
                 self._controller.set_mode_heat(self._deviceid)
-            elif operation_mode == STATE_COOL:
+            elif new_operation_mode == STATE_COOL:
                 self._controller.set_mode_cool(self._deviceid)
-            elif operation_mode == STATE_AUTO:
+            elif new_operation_mode == STATE_AUTO:
                 self._controller.set_mode_auto(self._deviceid)
-            elif operation_mode == STATE_FAN:
+            elif new_operation_mode == STATE_FAN_ONLY:
                 self._controller.set_mode_fan(self._deviceid)
                 self._target_temp = None
-            elif operation_mode == STATE_DRY:
+            elif new_operation_mode == STATE_DRY:
                 self._controller.set_mode_dry(self._deviceid)
 
             if self._target_temp:
                 self._controller.set_temperature(
                     self._deviceid, self._target_temp)
+            
+            self._current_operation = new_operation_mode
 
     def turn_on(self):
         """Turn thermostat on."""
@@ -211,11 +209,14 @@ class IntesisAC(ClimateDevice):
         self._run_hours = self._controller.get_run_hours(self._deviceid)
 
         # Operation mode
-        mode = self._controller.get_mode(self._deviceid)
+        if self._controller.get_power_state(self._deviceid) == 'off':
+            mode = 'off'
+        else:
+            mode = self._controller.get_mode(self._deviceid)
         self._current_operation = MAP_OPERATION_MODE.get(mode, STATE_UNKNOWN)
 
         # Target temperature
-        if self._current_operation in [STATE_OFF, STATE_FAN]:
+        if self._current_operation in [STATE_OFF, STATE_FAN_ONLY]:
             self._target_temp = None
         else:
             self._target_temp = self._controller.get_setpoint(self._deviceid)
@@ -242,7 +243,7 @@ class IntesisAC(ClimateDevice):
         icon = None
         if self.current_operation == STATE_HEAT:
             icon = 'mdi:white-balance-sunny'
-        elif self.current_operation == STATE_FAN:
+        elif self.current_operation == STATE_FAN_ONLY:
             icon = 'mdi:fan'
         elif self.current_operation == STATE_DRY:
             icon = 'mdi:water-off'
@@ -323,5 +324,3 @@ class IntesisAC(ClimateDevice):
     def supported_features(self):
         """Return the list of supported features."""
         return self._support
-
-

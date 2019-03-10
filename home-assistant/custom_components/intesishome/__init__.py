@@ -20,7 +20,7 @@ REQUIREMENTS = ['pyintesishome==0.5']
 
 controller = None
 hass = None
-    
+
 # MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
 CONFIG_SCHEMA = vol.Schema({
@@ -32,7 +32,7 @@ CONFIG_SCHEMA = vol.Schema({
 
 
 def setup(hass, hass_config):
-    """Setup IntesisHome platform."""
+    """Sets up the IntesisHome platform."""
     global controller
     from pyintesishome import IntesisHome
 
