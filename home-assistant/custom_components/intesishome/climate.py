@@ -34,10 +34,11 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 # values are in realtime.
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
-STATE_QUIET = 'Quiet'
-STATE_LOW = 'Low'
-STATE_MEDIUM = 'Medium'
-STATE_HIGH = 'High'
+STATE_FAN_AUTO = 'Auto'
+STATE_FAN_QUIET = 'Quiet'
+STATE_FAN_LOW = 'Low'
+STATE_FAN_MEDIUM = 'Medium'
+STATE_FAN_HIGH = 'High'
 
 SWING_STOP = 'Auto/Stop'
 SWING_SWING = 'Swing'
@@ -84,14 +85,14 @@ class IntesisAC(ClimateDevice):
         self._swing = None
         self._has_swing_control = False
 
-        self._power = STATE_UNKNOWN
+        self._power = False
         self._fan_speed = STATE_UNKNOWN
         self._current_operation = STATE_UNKNOWN
 
         self._operation_list = [STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY,
                                 STATE_FAN_ONLY, STATE_OFF]
-        self._fan_list = [STATE_AUTO, STATE_QUIET, STATE_LOW, STATE_MEDIUM,
-                          STATE_HIGH]
+        self._fan_list = [STATE_FAN_AUTO, STATE_FAN_QUIET, STATE_FAN_LOW,
+                          STATE_FAN_MEDIUM, STATE_FAN_HIGH]
         self._swing_list = [SWING_STOP, SWING_SWING, SWING_MIDDLE]
 
         self._support = (
@@ -170,7 +171,7 @@ class IntesisAC(ClimateDevice):
             if self._target_temp:
                 self._controller.set_temperature(
                     self._deviceid, self._target_temp)
-            
+
             self._current_operation = new_operation_mode
 
     def turn_on(self):
@@ -207,13 +208,18 @@ class IntesisAC(ClimateDevice):
         self._max_temp = self._controller.get_max_setpoint(self._deviceid)
         self._rssi = self._controller.get_rssi(self._deviceid)
         self._run_hours = self._controller.get_run_hours(self._deviceid)
+        if self._controller.get_power_state(self._deviceid) == 'on':
+            self._power = True
+        else:
+            self._power = False
 
         # Operation mode
-        if self._controller.get_power_state(self._deviceid) == 'off':
-            mode = 'off'
-        else:
+        if self._power:
             mode = self._controller.get_mode(self._deviceid)
-        self._current_operation = MAP_OPERATION_MODE.get(mode, STATE_UNKNOWN)
+            self._current_operation = MAP_OPERATION_MODE.get(
+                mode, STATE_UNKNOWN)
+        else:
+            self._current_operation = STATE_OFF
 
         # Target temperature
         if self._current_operation in [STATE_OFF, STATE_FAN_ONLY]:
@@ -267,6 +273,11 @@ class IntesisAC(ClimateDevice):
     def max_temp(self):
         """Return the maximum temperature from the IntesisHome interface"""
         return self._max_temp
+
+    @property
+    def is_on(self):
+        """Return true if on."""
+        return self._power
 
     @property
     def should_poll(self):
