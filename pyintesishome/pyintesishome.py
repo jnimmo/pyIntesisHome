@@ -46,15 +46,7 @@ COMMAND_MAP = {
     'setpoint': {'uid': 9}
 }
 
-try:
-    from asyncio import ensure_future
-except ImportError:
-    # Python 3.4.3 and ealier has this as async
-    # pylint: disable=unused-import
-    from asyncio import async
-
-    ensure_future = async
-
+from asyncio import ensure_future
 
 class IntesisHome(asyncio.Protocol):
     def __init__(self, username, password, loop=None):

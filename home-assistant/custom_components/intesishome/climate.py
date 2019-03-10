@@ -6,7 +6,7 @@ https://home-assistant.io/components/intesishome/
 """
 import logging
 import voluptuous as vol
-from custom_components import intesishome
+import intesishome
 from homeassistant.util import Throttle
 from datetime import timedelta
 from homeassistant.components.climate import ( ClimateDevice,
@@ -43,14 +43,7 @@ PLATFORM_SCHEMA = PLATFORM_SCHEMA.extend({
 MIN_TIME_BETWEEN_UPDATES = timedelta(seconds=180)
 
 
-try:
-    from asyncio import ensure_future
-except ImportError:
-    # Python 3.4.3 and ealier has this as async
-    # pylint: disable=unused-import
-    from asyncio import async
-    ensure_future = async
-
+from asyncio import ensure_future
 
 def setup_platform(hass, config, add_devices, discovery_info=None):
     """Setup the Nest thermostat."""
