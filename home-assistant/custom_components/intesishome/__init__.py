@@ -8,13 +8,14 @@ import logging
 # from datetime import timedelta
 import voluptuous as vol
 import homeassistant.helpers.config_validation as cv
-from homeassistant.const import (CONF_PASSWORD, CONF_USERNAME, CONF_STRUCTURE)
+from homeassistant.const import (CONF_PASSWORD, CONF_USERNAME)
 # from homeassistant.util import Throttle
 from homeassistant.helpers.discovery import async_load_platform
 from homeassistant.components import persistent_notification
 
 _LOGGER = logging.getLogger(__name__)
 DOMAIN = 'intesishome'
+DATA_INTESISHOME = 'intesishome'
 REQUIREMENTS = ['pyintesishome==0.5']
 
 controller = None
@@ -24,42 +25,36 @@ hass = None
 
 CONFIG_SCHEMA = vol.Schema({
     DOMAIN: vol.Schema({
-        vol.Required(CONF_USERNAME): cv.string,
-        vol.Required(CONF_PASSWORD): cv.string,
-        vol.Optional(CONF_STRUCTURE): vol.All(cv.ensure_list, cv.string)
-
+        vol.Required(CONF_USERNAME, 'authentication'): cv.string,
+        vol.Required(CONF_PASSWORD, 'authentication'): cv.string
     })
 }, extra=vol.ALLOW_EXTRA)
 
 
-def setup(hass, config):
+def setup(hass, hass_config):
     """Setup IntesisHome platform."""
     global controller
     from pyintesishome import IntesisHome
 
-    conf = config[DOMAIN]
-    _user = conf.get(CONF_USERNAME)
-    _pass = conf.get(CONF_PASSWORD)
+    _user = hass_config[DOMAIN][CONF_USERNAME]
+    _pass = hass_config[DOMAIN][CONF_PASSWORD]
 
     if controller is None:
-        controller = IntesisHome(_user,_pass, hass.loop)
-        controller.connect()
+        controller = IntesisHome(_user, _pass, hass.loop)
+    
+    hass.data[DATA_INTESISHOME] = controller
+    controller.connect()
 
-    hass.async_add_job(async_load_platform(hass, 'climate', DOMAIN))
+    hass.async_create_task(
+        async_load_platform(hass, 'climate', DOMAIN, None, hass_config))
 
     if controller.error_message:
-        persistent_notification.create(hass, controller.error_message, "IntesisHome Error", 'intesishome')
+        persistent_notification.create(
+            hass, controller.error_message, "IntesisHome Error", 'intesishome')
 
     return True
 
 
 def stop_intesishome():
     controller.stop()
-
-
-def get_devices():
-    return controller.get_devices()
-
-
-
 
