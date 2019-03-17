@@ -346,28 +346,28 @@ class IntesisHome(asyncio.Protocol):
         """Return true if the device supports swing modes."""
         return 42 in self._devices[str(deviceid)].get('widgets')
 
-    def get_setpoint(self, deviceid) -> int:
+    def get_setpoint(self, deviceid) -> float:
         """Public method returns the target temperature."""
         setpoint = self._devices[str(deviceid)].get('setpoint')
         if setpoint:
             setpoint = int(setpoint) / 10
         return setpoint
 
-    def get_temperature(self, deviceid):
+    def get_temperature(self, deviceid) -> float:
         """Public method returns the current temperature."""
         temperature = self._devices[str(deviceid)].get('temperature')
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
-    def get_max_setpoint(self, deviceid) -> int:
+    def get_max_setpoint(self, deviceid) -> float:
         """Public method returns the current maximum target temperature."""
         temperature = self._devices[str(deviceid)].get('setpoint_max')
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
-    def get_min_setpoint(self, deviceid) -> int:
+    def get_min_setpoint(self, deviceid) -> float:
         """Public method returns the current minimum target temperature."""
         temperature = self._devices[str(deviceid)].get('setpoint_min')
         if temperature:
