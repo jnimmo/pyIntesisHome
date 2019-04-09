@@ -10,7 +10,6 @@ from datetime import timedelta
 import voluptuous as vol
 
 import homeassistant.helpers.config_validation as cv
-import homeassistant.exceptions
 
 from homeassistant.components import persistent_notification
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateDevice
@@ -25,6 +24,7 @@ from homeassistant.components.climate.const import (ATTR_OPERATION_MODE,
 from homeassistant.const import (ATTR_TEMPERATURE, CONF_PASSWORD,
                                  CONF_USERNAME, STATE_OFF, STATE_UNKNOWN,
                                  TEMP_CELSIUS)
+from homeassistant.exceptions import PlatformNotReady
 
 REQUIREMENTS = ['pyintesishome==0.8']
 
@@ -87,14 +87,15 @@ async def async_setup_platform(hass, config, async_add_entities,
         intesis_devices = controller.get_devices().items()
         async_add_entities([IntesisAC(deviceid, device, controller)
                             for deviceid, device in intesis_devices], True)
+    elif controller.error_message == "WRONG_USERNAME_PASSWORD":
+        persistent_notification.create(
+            hass, "Wrong username/password.", "IntesisHome", 'intesishome')
     else:
-        controller.stop()
-        controller = None
         persistent_notification.create(
             hass, controller.error_message, "IntesisHome Error", 'intesishome')
-        raise homeassistant.exceptions.PlatformNotReady()
 
-    return True
+        controller.stop()
+        raise PlatformNotReady()
 
 
 class IntesisAC(ClimateDevice):
@@ -102,12 +103,13 @@ class IntesisAC(ClimateDevice):
 
     def __init__(self, deviceid, ih_device, controller):
         """Initialize the thermostat."""
-        _LOGGER.info('Added climate device with state: %s', repr(ih_device))
+        _LOGGER.debug('Added climate device with state: %s', repr(ih_device))
         self._controller = controller
 
         self._deviceid = deviceid
         self._devicename = ih_device.get('name')
         self._has_swing_control = IH_SWING_WIDGET in ih_device.get('widgets')
+        self._connected = False
 
         self._max_temp = None
         self._min_temp = None
@@ -122,6 +124,7 @@ class IntesisAC(ClimateDevice):
         self._power = False
         self._fan_speed = STATE_UNKNOWN
         self._current_operation = STATE_UNKNOWN
+        self._connection_retries = 0
 
         self._operation_list = [STATE_AUTO, STATE_COOL, STATE_HEAT, STATE_DRY,
                                 STATE_FAN_ONLY, STATE_OFF]
@@ -151,19 +154,17 @@ class IntesisAC(ClimateDevice):
     @property
     def device_state_attributes(self):
         """Return the device specific state attributes."""
-        if self._controller.is_connected:
-            update_type = 'Push'
-        else:
-            update_type = 'Poll'
+        attrs = {}
+        if self._has_swing_control:
+            attrs['vertical_vane'] = self._vvane
+            attrs['horizontal_vane'] = self._hvane
 
-        return {
-            "run_hours": self._run_hours,
-            "rssi": self._rssi,
-            "temperature": self._target_temp,
-            "ha_update_type": update_type,
-            "vertical_vane": self._vvane,
-            "horizontal_vane": self._hvane,
-        }
+        if self._controller.is_connected:
+            attrs['ha_update_type'] = 'push'
+        else:
+            attrs['ha_update_type'] = 'poll'
+
+        return attrs
 
     def set_temperature(self, **kwargs):
         """Set new target temperature."""
@@ -184,7 +185,6 @@ class IntesisAC(ClimateDevice):
         if operation_mode == STATE_OFF:
             self._controller.set_power_off(self._deviceid)
             self._power = False
-            self._target_temp = None
         else:
             # Provide instant visual feedback
             self._current_operation = operation_mode
@@ -202,7 +202,6 @@ class IntesisAC(ClimateDevice):
                 self._controller.set_mode_auto(self._deviceid)
             elif operation_mode == STATE_FAN_ONLY:
                 self._controller.set_mode_fan(self._deviceid)
-                self._target_temp = None
             elif operation_mode == STATE_DRY:
                 self._controller.set_mode_dry(self._deviceid)
 
@@ -245,7 +244,11 @@ class IntesisAC(ClimateDevice):
         """Copy values from controller dictionary to climate device."""
         if not self._controller.is_connected:
             await self.hass.async_add_executor_job(self._controller.connect)
+            self._connection_retries += 1
+        else:
+            self._connection_retries = 0
 
+        self._power = self._controller.is_on(self._deviceid)
         self._current_temp = self._controller.get_temperature(self._deviceid)
         self._min_temp = self._controller.get_min_setpoint(self._deviceid)
         self._max_temp = self._controller.get_max_setpoint(self._deviceid)
@@ -256,15 +259,6 @@ class IntesisAC(ClimateDevice):
 
         # Operation mode
         self._current_operation = MAP_OPERATION_MODE.get(mode, STATE_UNKNOWN)
-
-        if self._controller.is_on(self._deviceid):
-            self._power = True
-        else:
-            self._power = False
-
-        # Target temperature
-        if not self._power or self._current_operation == STATE_FAN_ONLY:
-            self._target_temp = None
 
         # Fan speed
         fan_speed = self._controller.get_fan_speed(self._deviceid)
@@ -287,6 +281,14 @@ class IntesisAC(ClimateDevice):
             else:
                 self._swing = IH_SWING_STOP
 
+        # Track connection lost/restored.
+        if self._connected != self._controller.is_connected:
+            self._connected = self._controller.is_connected
+            if self._connected:
+                _LOGGER.debug("Lost connection to IntesisHome.")
+            else:
+                _LOGGER.debug("Connection to IntesisHome was restored.")
+
     async def async_will_remove_from_hass(self):
         """Shutdown the controller when the device is being removed."""
         self._controller.stop()
@@ -294,14 +296,14 @@ class IntesisAC(ClimateDevice):
     @property
     def icon(self):
         """Return the icon for the current state."""
+        icon = None
         if self._power:
-            return MAP_STATE_ICONS.get(self._current_operation)
-        else:
-            return None
+            icon = MAP_STATE_ICONS.get(self._current_operation)
+        return icon
 
     def update_callback(self):
         """Let HA know there has been an update from the controller."""
-        _LOGGER.info("IntesisHome sent a status update.")
+        _LOGGER.debug("IntesisHome sent a status update.")
         self.hass.async_add_job(self.schedule_update_ha_state, True)
 
     @property
@@ -322,8 +324,8 @@ class IntesisAC(ClimateDevice):
     @property
     def should_poll(self):
         """Poll for updates if pyIntesisHome doesn't have a socket open."""
-        """This could be switched on controller.is_connected, but HA doesn't"""
-        """seem to handle dynamically changing from push to poll."""
+        # This could be switched on controller.is_connected, but HA doesn't
+        # seem to handle dynamically changing from push to poll.
         return True
 
     @property
@@ -334,16 +336,12 @@ class IntesisAC(ClimateDevice):
     @property
     def current_fan_mode(self):
         """Return whether the fan is on."""
-        if self._power:
-            return self._fan_speed
-        return None
+        return self._fan_speed
 
     @property
     def current_swing_mode(self):
         """Return current swing mode."""
-        if self._power:
-            return self._swing
-        return None
+        return self._swing
 
     @property
     def fan_list(self):
@@ -358,7 +356,12 @@ class IntesisAC(ClimateDevice):
     @property
     def assumed_state(self) -> bool:
         """If the device is not connected we have to assume state."""
-        return not self._controller.is_connected
+        return not self._connected
+
+    @property
+    def available(self) -> bool:
+        """If the device hasn't been able to connect, mark as unavailable."""
+        return self._connected or self._connection_retries < 2
 
     @property
     def current_temperature(self):
@@ -375,9 +378,7 @@ class IntesisAC(ClimateDevice):
     @property
     def target_temperature(self):
         """Return the current setpoint temperature if unit is on."""
-        if self._power:
-            return self._target_temp
-        return None
+        return self._target_temp
 
     @property
     def supported_features(self):
