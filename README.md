@@ -23,7 +23,7 @@ For IntesisBox support, see [hass-intesisbox](https://github.com/jnimmo/hass-int
  - While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required (check using *is_connected* property)
  - Callbacks to be notified of state updates can be added with the add_callback() method.
 
-## Library basic example
+### Library basic example
 ```
 controller = IntesisHome(username, password)
 controller.poll_status()
@@ -35,7 +35,7 @@ controller.set_mode_heat('12015601252591')
 controller.set_temperature('12015601252591', 22)
 controller.set_fan_speed('12015601252591','quiet')
 ```
-## Control methods
+### Control methods
 
  - set_mode_heat(deviceID)
  - set_mode_cool(deviceID)
