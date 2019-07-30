@@ -3,7 +3,7 @@ This project is a python3 library for interfacing with the IntesisHome Smart AC 
 It is fully asynchronous using the asyncio library, and utilises the private API used by the IntesisHome mobile apps.
 
 ### Home Assistant
-To use with Home Assistant, download the intesishome folder and place in your custom_components folder.
+To use with Home Assistant, download the intesishome folder from https://github.com/jnimmo/home-assistant/tree/dev/homeassistant/components/intesishome and place in your custom_components folder.
 
 Add the following to your configuration.yaml 
 
