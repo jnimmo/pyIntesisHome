@@ -210,6 +210,10 @@ class IntesisHome(asyncio.Protocol):
                             self._devices[device['id']] = {"name": device['name'], "widgets": device['widgets']}
                             _LOGGER.debug(repr(self._devices))
 
+                # Handle empty device list
+                if not self._devices:
+                    self._build_device_list(status_response['status']['status'])
+
                 # Update device status
                 for status in status_response['status']['status']:
                     self._update_device_state(status['deviceId'], status['uid'], status['value'])
@@ -276,6 +280,13 @@ class IntesisHome(asyncio.Protocol):
             if cmd:
                 _LOGGER.debug("Sending from queue: {!r}".format(cmd))
                 self._transport.write(cmd.encode('ascii'))
+
+    def _build_device_list(self, statuses):
+        """Internal method to build a device list from IntesisHome statuses"""
+        deviceids = set([status['deviceId'] for status in statuses])
+
+        for index, deviceid in enumerate(deviceids):
+            self._devices[str(deviceid)] = {"name": "Device %s" % str(index + 1), "widgets": [42]}
 
     def _update_device_state(self, deviceid, uid, value):
         """Internal method to update the state table of IntesisHome devices"""
