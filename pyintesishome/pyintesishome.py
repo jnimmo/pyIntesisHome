@@ -24,8 +24,7 @@ INTESIS_MAP = {
         "values": {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"},
     },
     4: {
-        "name": "fan_speed",
-        "values": {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high"},
+        "name": "fan_speed"
     },
     5: {
         "name": "vvane",
@@ -316,9 +315,9 @@ class IntesisHome():
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
             self._connectionStatus = API_DISCONNECTED
 
-    def get_run_hours(self, deviceid) -> str:
+    def get_run_hours(self, deviceId) -> str:
         """Public method returns the run hours of the IntesisHome controller."""
-        run_hours = self._devices[str(deviceid)].get("working_hours")
+        run_hours = self._devices[str(deviceId)].get("working_hours")
         return run_hours
 
     def _set_mode(self, deviceId, mode: str):
@@ -340,7 +339,7 @@ class IntesisHome():
         self._set_value(
             deviceId,
             COMMAND_MAP["fan_speed"]["uid"],
-            COMMAND_MAP["fan_speed"]["values"][fan],
+            self._devices[deviceId]["fan_speed_list"].index(fan)
         )
 
     def set_vertical_vane(self, deviceId, vane: str):
@@ -355,34 +354,42 @@ class IntesisHome():
             deviceId, COMMAND_MAP["hvane"]["uid"], COMMAND_MAP["hvane"]["values"][vane]
         )
 
-    def _set_value(self, deviceid, uid, value):
+    def _set_value(self, deviceId, uid, value):
         """Internal method to send a command to the API (and connect if necessary)"""
-        message = '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}' % (deviceid, uid, value)
+        message = '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}' % (deviceId, uid, value)
         self._sendQueue.put_nowait(message)
 
-    def _update_device_state(self, deviceid, uid, value):
+    def _update_device_state(self, deviceId, uid, value):
         """Internal method to update the state table of IntesisHome/Airconwithme devices"""
-        deviceid = str(deviceid)
+        deviceId = str(deviceId)
 
         if uid in INTESIS_MAP:
             # Translate known UIDs to configuration item names
             if "values" in INTESIS_MAP[uid]:
-                self._devices[deviceid][INTESIS_MAP[uid]["name"]] = INTESIS_MAP[uid][
+                self._devices[deviceId][INTESIS_MAP[uid]["name"]] = INTESIS_MAP[uid][
                     "values"
                 ][value]
             # If the UID has a null value set the value to none
             elif "null" in INTESIS_MAP[uid] and value == INTESIS_MAP[uid]["null"]:
-                self._devices[deviceid][INTESIS_MAP[uid]["name"]] = None
+                self._devices[deviceId][INTESIS_MAP[uid]["name"]] = None
             else:
-                self._devices[deviceid][INTESIS_MAP[uid]["name"]] = value
+                self._devices[deviceId][INTESIS_MAP[uid]["name"]] = value
+            
+            # Update fan speed map
+            if uid == 67:
+                if value <= 15:
+                    self._devices[deviceId]["fan_speed_list"] = ["auto", "low", "medium", "high"]
+                else:
+                    self._devices[deviceId]["fan_speed_list"] = ["auto", "quiet", "low", "medium", "high"]
+                    
         else:
             # Log unknown UIDs
-            self._devices[deviceid][f"unknown_uid_{uid}"] = value
+            self._devices[deviceId][f"unknown_uid_{uid}"] = value
 
-    def _update_rssi(self, deviceid, rssi):
+    def _update_rssi(self, deviceId, rssi):
         """Internal method to update the wireless signal strength."""
         if rssi:
-            self._devices[str(deviceid)]["rssi"] = rssi
+            self._devices[str(deviceId)]["rssi"] = rssi
 
     def set_mode_heat(self, deviceId):
         """Public method to set device to heat asynchronously."""
@@ -420,66 +427,71 @@ class IntesisHome():
         """Public method returns the current mode of operation."""
         return self._devices[str(deviceId)].get("mode")
 
-    def get_fan_speed(self, deviceid) -> str:
+    def get_fan_speed(self, deviceId) -> str:
         """Public method returns the current fan speed."""
-        return self._devices[str(deviceid)].get("fan_speed")
+        fan_speed_int = self._devices[str(deviceId)].get("fan_speed")
+        return self._devices[str(deviceId)].get("fan_speed_list")[fan_speed_int]
 
-    def get_device_name(self, deviceid) -> str:
-        return self._devices[str(deviceid)].get("name")
+    def get_fan_speed_list(self, deviceId):
+        """Public method to return the list of possible fan speeds."""
+        return self._devices[str(deviceId)].get("fan_speed_list")
 
-    def get_power_state(self, deviceid) -> str:
+    def get_device_name(self, deviceId) -> str:
+        return self._devices[str(deviceId)].get("name")
+
+    def get_power_state(self, deviceId) -> str:
         """Public method returns the current power state."""
-        return self._devices[str(deviceid)].get("power")
+        return self._devices[str(deviceId)].get("power")
 
-    def is_on(self, deviceid) -> bool:
+    def is_on(self, deviceId) -> bool:
         """Return true if the controlled device is turned on"""
-        return self._devices[str(deviceid)].get("power") == "on"
+        return self._devices[str(deviceId)].get("power") == "on"
 
-    def has_swing_control(self, deviceid) -> bool:
+    def has_swing_control(self, deviceId) -> bool:
         """Return true if the device supports swing modes."""
-        return 42 in self._devices[str(deviceid)].get("widgets")
+        return 42 in self._devices[str(deviceId)].get("widgets")
 
-    def get_setpoint(self, deviceid) -> float:
+    def get_setpoint(self, deviceId) -> float:
         """Public method returns the target temperature."""
-        setpoint = self._devices[str(deviceid)].get("setpoint")
+        setpoint = self._devices[str(deviceId)].get("setpoint")
         if setpoint:
             setpoint = int(setpoint) / 10
         return setpoint
 
-    def get_temperature(self, deviceid) -> float:
+    def get_temperature(self, deviceId) -> float:
         """Public method returns the current temperature."""
-        temperature = self._devices[str(deviceid)].get("temperature")
+        temperature = self._devices[str(deviceId)].get("temperature")
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
-    def get_max_setpoint(self, deviceid) -> float:
+    def get_max_setpoint(self, deviceId) -> float:
         """Public method returns the current maximum target temperature."""
-        temperature = self._devices[str(deviceid)].get("setpoint_max")
+        temperature = self._devices[str(deviceId)].get("setpoint_max")
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
-    def get_min_setpoint(self, deviceid) -> float:
+    def get_min_setpoint(self, deviceId) -> float:
         """Public method returns the current minimum target temperature."""
-        temperature = self._devices[str(deviceid)].get("setpoint_min")
+        temperature = self._devices[str(deviceId)].get("setpoint_min")
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
-    def get_rssi(self, deviceid) -> str:
+    def get_rssi(self, deviceId) -> str:
         """Public method returns the current wireless signal strength."""
-        rssi = self._devices[str(deviceid)].get("rssi")
+        rssi = self._devices[str(deviceId)].get("rssi")
         return rssi
 
-    def get_vertical_swing(self, deviceid) -> str:
+    def get_vertical_swing(self, deviceId) -> str:
         """Public method returns the current vertical vane setting."""
-        swing = self._devices[str(deviceid)].get("vvane")
+        swing = self._devices[str(deviceId)].get("vvane")
         return swing
 
-    def get_horizontal_swing(self, deviceid) -> str:
+    def get_horizontal_swing(self, deviceId) -> str:
         """Public method returns the current horizontal vane setting."""
-        swing = self._devices[str(deviceid)].get("hvane")
+        swing = self._devices[str(deviceId)].get("hvane")
         return swing
 
     def _send_update_callback(self):
