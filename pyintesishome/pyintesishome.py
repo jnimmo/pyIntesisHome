@@ -320,41 +320,41 @@ class IntesisHome():
         run_hours = self._devices[str(deviceId)].get("working_hours")
         return run_hours
 
-    def _set_mode(self, deviceId, mode: str):
+    async def _set_mode(self, deviceId, mode: str):
         """Internal method for setting the mode with a string value."""
         if mode in COMMAND_MAP["mode"]["values"]:
-            self._set_value(
+            await self._set_value(
                 deviceId,
                 COMMAND_MAP["mode"]["uid"],
                 COMMAND_MAP["mode"]["values"][mode],
             )
 
-    def set_temperature(self, deviceId, setpoint):
+    async def set_temperature(self, deviceId, setpoint):
         """Public method for setting the temperature"""
         set_temp = int(setpoint * 10)
-        self._set_value(deviceId, COMMAND_MAP["setpoint"]["uid"], set_temp)
+        await self._set_value(deviceId, COMMAND_MAP["setpoint"]["uid"], set_temp)
 
-    def set_fan_speed(self, deviceId, fan: str):
+    async def set_fan_speed(self, deviceId, fan: str):
         """Public method to set the fan speed"""
-        self._set_value(
+        await self._set_value(
             deviceId,
             COMMAND_MAP["fan_speed"]["uid"],
             self._devices[deviceId]["fan_speed_list"].index(fan)
         )
 
-    def set_vertical_vane(self, deviceId, vane: str):
+    async def set_vertical_vane(self, deviceId, vane: str):
         """Public method to set the vertical vane"""
-        self._set_value(
+        await self._set_value(
             deviceId, COMMAND_MAP["vvane"]["uid"], COMMAND_MAP["vvane"]["values"][vane]
         )
 
-    def set_horizontal_vane(self, deviceId, vane: str):
+    async def set_horizontal_vane(self, deviceId, vane: str):
         """Public method to set the horizontal vane"""
-        self._set_value(
+        await self._set_value(
             deviceId, COMMAND_MAP["hvane"]["uid"], COMMAND_MAP["hvane"]["values"][vane]
         )
 
-    def _set_value(self, deviceId, uid, value):
+    async def _set_value(self, deviceId, uid, value):
         """Internal method to send a command to the API (and connect if necessary)"""
         message = '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}' % (deviceId, uid, value)
         self._sendQueue.put_nowait(message)
@@ -391,35 +391,35 @@ class IntesisHome():
         if rssi:
             self._devices[str(deviceId)]["rssi"] = rssi
 
-    def set_mode_heat(self, deviceId):
+    async def set_mode_heat(self, deviceId):
         """Public method to set device to heat asynchronously."""
-        self._set_mode(deviceId, "heat")
+        await self._set_mode(deviceId, "heat")
 
-    def set_mode_cool(self, deviceId):
+    async def set_mode_cool(self, deviceId):
         """Public method to set device to cool asynchronously."""
-        self._set_mode(deviceId, "cool")
+        await self._set_mode(deviceId, "cool")
 
-    def set_mode_fan(self, deviceId):
+    async def set_mode_fan(self, deviceId):
         """Public method to set device to fan asynchronously."""
-        self._set_mode(deviceId, "fan")
+        await self._set_mode(deviceId, "fan")
 
-    def set_mode_auto(self, deviceId):
+    async def set_mode_auto(self, deviceId):
         """Public method to set device to auto asynchronously."""
-        self._set_mode(deviceId, "auto")
+        await self._set_mode(deviceId, "auto")
 
-    def set_mode_dry(self, deviceId):
+    async def set_mode_dry(self, deviceId):
         """Public method to set device to dry asynchronously."""
-        self._set_mode(deviceId, "dry")
+        await self._set_mode(deviceId, "dry")
 
-    def set_power_off(self, deviceId):
+    async def set_power_off(self, deviceId):
         """Public method to turn off the device asynchronously."""
-        self._set_value(
+        await self._set_value(
             deviceId, COMMAND_MAP["power"]["uid"], COMMAND_MAP["power"]["values"]["off"]
         )
 
-    def set_power_on(self, deviceId):
+    async def set_power_on(self, deviceId):
         """Public method to turn on the device asynchronously."""
-        self._set_value(
+        await self._set_value(
             deviceId, COMMAND_MAP["power"]["uid"], COMMAND_MAP["power"]["values"]["on"]
         )
 
