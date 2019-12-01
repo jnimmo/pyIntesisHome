@@ -17,6 +17,13 @@ API_CONNECTING = "Connecting"
 API_AUTHENTICATED = "Connected"
 API_AUTH_FAILED = "Wrong username/password"
 
+SUPPORT_FAN_AUTO = 1
+SUPPORT_FAN_SP1 = 2
+SUPPORT_FAN_SP2 = 4 
+SUPPORT_FAN_SP3 = 8
+SUPPORT_FAN_SP4 = 16
+SUPPORT_FAN_SP5 = 32
+
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
     2: {
@@ -74,7 +81,7 @@ INTESIS_MAP = {
     63: {"name": "config_horizontal_vanes"},
     64: {"name": "config_vertical_vanes"},
     65: {"name": "config_quiet"},
-    67: {"name": "config_fan_map"},  # 15 = auto, low, medium, high, #31 = auto, quiet, low, medium, high
+    67: {"name": "config_fan_map"},  # 14 = low, medium, high, 15 = auto, low, medium, high, #31 = auto, quiet, low, medium, high, #63 = auto + 5 speeds,
     68: {"name": "instant_power_consumption"},
     69: {"name": "accumulated_power_consumption"},
     140: {"name": "extremes_protection_status"},
@@ -375,16 +382,10 @@ class IntesisHome():
             else:
                 self._devices[deviceId][INTESIS_MAP[uid]["name"]] = value
             
-            # Update fan speed map
-            if uid == 67:
-                if value <= 15:
-                    self._devices[deviceId]["fan_speed_list"] = ["auto", "low", "medium", "high"]
-                else:
-                    self._devices[deviceId]["fan_speed_list"] = ["auto", "quiet", "low", "medium", "high"]
-                    
         else:
             # Log unknown UIDs
             self._devices[deviceId][f"unknown_uid_{uid}"] = value
+
 
     def _update_rssi(self, deviceId, rssi):
         """Internal method to update the wireless signal strength."""
@@ -430,11 +431,29 @@ class IntesisHome():
     def get_fan_speed(self, deviceId) -> str:
         """Public method returns the current fan speed."""
         fan_speed_int = self._devices[str(deviceId)].get("fan_speed")
-        return self._devices[str(deviceId)].get("fan_speed_list")[fan_speed_int]
+        return self.get_fan_speed_list(deviceId)[fan_speed_int]
 
     def get_fan_speed_list(self, deviceId):
         """Public method to return the list of possible fan speeds."""
-        return self._devices[str(deviceId)].get("fan_speed_list")
+        fan_speed_list = self._devices[str(deviceId)].get("fan_speed_list")
+
+        if not fan_speed_list:
+            config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
+            fan_speed_list = []
+
+            if config_fan_map & SUPPORT_FAN_AUTO:
+                fan_speed_list = ["auto"]
+
+            if config_fan_map & SUPPORT_FAN_SP5:
+                fan_speed_list.extend(["quiet", "low", "medium", "high", "maximum"])
+            elif config_fan_map & SUPPORT_FAN_SP4:
+                fan_speed_list.extend(["quiet", "low", "medium", "high"])
+            elif config_fan_map & SUPPORT_FAN_SP3:
+                fan_speed_list.extend(["low", "medium", "high"])
+
+        self._devices[str(deviceId)]["fan_speed_list"] = fan_speed_list
+        
+        return fan_speed_list
 
     def get_device_name(self, deviceId) -> str:
         return self._devices[str(deviceId)].get("name")
