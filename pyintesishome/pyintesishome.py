@@ -280,7 +280,6 @@ class IntesisHome():
                     _LOGGER.error(
                         f"Error from {self._device_type} API: {status_response['errorMessage']}"
                     )
-                    self._send_error_callback(status_response["errorMessage"])
                     self._connectionStatus = API_DISCONNECTED
                     return
 
@@ -551,10 +550,6 @@ class IntesisHome():
     async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._updateCallbacks.append(method)
-
-    async def add_error_callback(self, method):
-        """Public method to add a callback subscriber."""
-        self._errorCallbacks.append(method)
 
 def help():
     print("syntax: pyintesishome [options] command [command_args]")
