@@ -142,7 +142,6 @@ class IntesisHome():
         self._transport = None
         self._protocol = None
         self._updateCallbacks = []
-        self._errorCallbacks = []
         self._errorMessage = None
         self._webSession = websession
         self._ownSession = False
@@ -188,7 +187,7 @@ class IntesisHome():
                         resp["data"]["deviceId"], resp["data"]["rssi"]
                     )
                     if resp["data"]["uid"] != 60002:
-                        self._send_update_callback()
+                        await self._send_update_callback(deviceId=resp["data"]["deviceId"])
                 elif resp["command"] == "rssi":
                     # Wireless strength has changed
                     self._update_rssi(
@@ -198,7 +197,7 @@ class IntesisHome():
                 _LOGGER.error(f"pyIntesisHome lost connection to the {self._device_type} server.")
                 self._reader._transport.close()
                 self._connectionStatus = API_DISCONNECTED
-                self._send_update_callback()
+                await self._send_update_callback()
                 return
 
 
@@ -316,7 +315,7 @@ class IntesisHome():
                     self._update_device_state(deviceId, status["uid"], status["value"])
 
                 if sendcallback:
-                    self._send_update_callback()
+                    await self._send_update_callback(deviceId)
         except (aiohttp.client_exceptions.ClientError) as e:
             self._errorMessage = f"Error connecting to {self._device_type} API: {e}"
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
@@ -484,6 +483,13 @@ class IntesisHome():
             temperature = int(temperature) / 10
         return temperature
 
+    def get_outdoor_temperature(self, deviceId) -> float:
+        """Public method returns the current temperature."""
+        outdoor_temp = self._devices[str(deviceId)].get("outdoor_temp")
+        if outdoor_temp:
+            outdoor_temp = int(outdoor_temp) / 10
+        return outdoor_temp
+
     def get_max_setpoint(self, deviceId) -> float:
         """Public method returns the current maximum target temperature."""
         temperature = self._devices[str(deviceId)].get("setpoint_max")
@@ -513,23 +519,14 @@ class IntesisHome():
         swing = self._devices[str(deviceId)].get("hvane")
         return swing
 
-    def _send_update_callback(self):
+    async def _send_update_callback(self, deviceId):
         """Internal method to notify all update callback subscribers."""
-        if self._updateCallbacks == []:
-            _LOGGER.debug("Update callback has not been set by client.")
+        if self._updateCallbacks:
+            for callback in self._updateCallbacks:
+                await callback(device_id=str(deviceId))
+        else:
+            _LOGGER.debug("Update callback has not been set by client")
 
-        for callback in self._updateCallbacks:
-            callback()
-
-    def _send_error_callback(self, message):
-        """Internal method to notify all update callback subscribers."""
-        self._errorMessage = message
-
-        if self._errorCallbacks == []:
-            _LOGGER.debug("Error callback has not been set by client.")
-
-        for callback in self._errorCallbacks:
-            callback(message)
 
     @property
     def is_connected(self) -> bool:
@@ -551,11 +548,11 @@ class IntesisHome():
         """Returns true when the TCP connection is disconnected and idle."""
         return self._connectionStatus == API_DISCONNECTED
 
-    def add_update_callback(self, method):
+    async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._updateCallbacks.append(method)
 
-    def add_error_callback(self, method):
+    async def add_error_callback(self, method):
         """Public method to add a callback subscriber."""
         self._errorCallbacks.append(method)
 
