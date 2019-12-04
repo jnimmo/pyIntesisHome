@@ -17,22 +17,13 @@ API_CONNECTING = "Connecting"
 API_AUTHENTICATED = "Connected"
 API_AUTH_FAILED = "Wrong username/password"
 
-SUPPORT_FAN_AUTO = 1
-SUPPORT_FAN_SP1 = 2
-SUPPORT_FAN_SP2 = 4 
-SUPPORT_FAN_SP3 = 8
-SUPPORT_FAN_SP4 = 16
-SUPPORT_FAN_SP5 = 32
-
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
     2: {
         "name": "mode",
         "values": {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"},
     },
-    4: {
-        "name": "fan_speed"
-    },
+    4: {"name": "fan_speed"},
     5: {
         "name": "vvane",
         "values": {
@@ -59,15 +50,24 @@ INTESIS_MAP = {
     },
     9: {"name": "setpoint", "null": 32768},
     10: {"name": "temperature"},
+    12: {"name": "remote_controller_lock"},
     13: {"name": "working_hours"},
     14: {"name": "alarm_status"},
     15: {"name": "error_code"},
-    34: {"name": "quiet_mode"},
+    34: {"name": "quiet_mode", "values": {0: "off", 1: "on"}},
     35: {"name": "setpoint_min"},
     36: {"name": "setpoint_max"},
     37: {"name": "outdoor_temp"},
-    42: {"name": "clima_working_mode"},
-    44: {"name": "tank_working_mode"},
+    38: {"name": "water_outlet_temperature"},
+    39: {"name": "water_inlet_temperature"},
+    42: {
+        "name": "climate_working_mode",
+        "values": {0: "comfort", 1: "eco", 2: "powerful"},
+    },
+    44: {
+        "name": "tank_working_mode",
+        "values": {0: "comfort", 1: "eco", 2: "powerful", -32768: "N/A"},
+    },
     45: {"name": "tank_water_temperature"},
     46: {"name": "solar_status"},
     48: {"name": "thermoshift_heat_eco"},
@@ -76,18 +76,107 @@ INTESIS_MAP = {
     52: {"name": "thermoshift_tank_eco"},
     53: {"name": "thermoshift_tank_powerful"},
     54: {"name": "error_reset"},
-    58: {"name": "operating_mode"},
-    61: {"name": "config_mode_map"}, # 31 = auto, heat, cool, dry, fan, 
+    55: {"name": "heat_thermo_shift"},
+    56: {"name": "cool_water_setpoint_temperature"},
+    57: {"name": "tank_setpoint_temperature"},
+    58: {
+        "name": "user_mode",
+        "values": {
+            0: "maintenance",
+            1: "heat",
+            2: "heat+tank",
+            3: "tank",
+            4: "cool+tank",
+            5: "cool",
+            6: "auto",
+            7: "auto+tank",
+        },
+    },
+    60: {"name": "heat_8_10"},
+    61: {"name": "config_mode_map"},  # 31 = auto, heat, cool, dry, fan,
+    62: {"name": "runtime_mode_restrictions"},
     63: {"name": "config_horizontal_vanes"},
     64: {"name": "config_vertical_vanes"},
     65: {"name": "config_quiet"},
-    67: {"name": "config_fan_map"},  # 14 = low, medium, high, 15 = auto, low, medium, high, #31 = auto, quiet, low, medium, high, #63 = auto + 5 speeds,
+    66: {"name": "config_confirm_off"},
+    67: {
+        "name": "config_fan_map",
+        "values": {
+            14: {1: "low", 2: "medium", 3: "high"},
+            15: {0: "auto", 1: "low", 2: "medium", 3: "high"},
+            30: {1: "quiet", 2: "low", 3: "medium", 4: "high"},
+            31: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high"},
+            62: {1: "quiet", 2: "low", 3: "medium", 4: "high", 5: "max"},
+            63: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high", 5: "max"},
+        },
+    },
     68: {"name": "instant_power_consumption"},
     69: {"name": "accumulated_power_consumption"},
-    140: {"name": "extremes_protection_status"},
-    148: {"name": "extremes_protection"},
+    75: {"name": "config_operating_mode"},
+    77: {"name": "config_vanes_pulse"},
+    80: {"name": "aquarea_tank_consumption"},
+    81: {"name": "aquarea_cool_consumption"},
+    82: {"name": "aquarea_heat_consumption"},
+    83: {"name": "heat_high_water_set_temperature"},
+    84: {"name": "heating_off_temperature"},
+    87: {"name": "heater_setpoint_temperature"},
+    90: {"name": "water_target_temperature"},
+    95: {
+        "name": "heat_interval",
+        "values": {
+            1: 30,
+            2: 60,
+            3: 90,
+            4: 120,
+            5: 150,
+            6: 180,
+            7: 210,
+            8: 240,
+            9: 270,
+            10: 300,
+            11: 330,
+            12: 360,
+            13: 390,
+            14: 420,
+            15: 450,
+            16: 480,
+            17: 510,
+            18: 540,
+            19: 570,
+            20: 600,
+            -32768: "N/A",
+        },
+    },
+    107: {"name": "aquarea_working_hours"},
+    123: {"name": "ext_thermo_control", "values": {85: "off", 170: "on"}},
+    124: {"name": "tank_present", "values": {85: "off", 170: "on"}},
+    125: {"name": "solar_priority", "values": {85: "off", 170: "on", -32768: "N/A"}},
+    134: {"name": "heat_low_outdoor_set_temperature"},
+    135: {"name": "heat_high_outdoor_set_temperature"},
+    136: {"name": "heat_low_water_set_temperature"},
     137: {"name": "farenheit_type"},
+    140: {"name": "extremes_protection_status"},
+    144: {"name": "error_code"},
+    148: {"name": "extremes_protection"},
+    149: {"name": "binary_input"},
+    153: {"name": "config_binary_input"},
+    168: {"name": "uid_binary_input_on_off"},
+    169: {"name": "uid_binary_input_occupancy"},
+    170: {"name": "uid_binary_input_window"},
+    181: {"name": "mainenance_w_reset"},
+    182: {"name": "mainenance_wo_reset"},
+    183: {"name": "filter_clean"},
     184: {"name": "filter_due_hours"},
+    191: {"name": "uid_binary_input_sleep_mode"},
+    50000: {"name": "external_led", "values": {0: "off", 1: "on"}},
+    50001: {"name": "internal_led", "values": {0: "off", 1: "on"}},
+    50002: {"name": "internal_temperature_offset"},
+    50003: {"name": "temp_limitation", "values": {0: "off", 2: "on"}},
+    50004: {"name": "cool_temperature_min"},
+    50005: {"name": "cool_temperature_max"},
+    50006: {"name": "heat_temperature_min"},
+    50007: {"name": "heat_temperature_min"},
+    60002: {"name": "rssi"},
 }
 
 COMMAND_MAP = {
@@ -122,8 +211,15 @@ COMMAND_MAP = {
 }
 
 
-class IntesisHome(): 
-    def __init__(self, username, password, loop=None, websession=None, device_type=DEVICE_INTESISHOME):
+class IntesisHome:
+    def __init__(
+        self,
+        username,
+        password,
+        loop=None,
+        websession=None,
+        device_type=DEVICE_INTESISHOME,
+    ):
         # Select correct API for device type
         self._device_type = device_type
         if device_type == DEVICE_AIRCONWITHME:
@@ -162,8 +258,8 @@ class IntesisHome():
 
     async def _handle_packets(self):
         while True:
-            try: 
-                data = await self._reader.readuntil(b'}}')
+            try:
+                data = await self._reader.readuntil(b"}}")
                 if not data:
                     break
 
@@ -183,23 +279,22 @@ class IntesisHome():
                         resp["data"]["uid"],
                         resp["data"]["value"],
                     )
-                    self._update_rssi(
-                        resp["data"]["deviceId"], resp["data"]["rssi"]
-                    )
+                    self._update_rssi(resp["data"]["deviceId"], resp["data"]["rssi"])
                     if resp["data"]["uid"] != 60002:
-                        await self._send_update_callback(deviceId=resp["data"]["deviceId"])
+                        await self._send_update_callback(
+                            deviceId=resp["data"]["deviceId"]
+                        )
                 elif resp["command"] == "rssi":
                     # Wireless strength has changed
-                    self._update_rssi(
-                        resp["data"]["deviceId"], resp["data"]["value"]
-                    )
+                    self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
             except asyncio.IncompleteReadError:
-                _LOGGER.error(f"pyIntesisHome lost connection to the {self._device_type} server.")
+                _LOGGER.error(
+                    f"pyIntesisHome lost connection to the {self._device_type} server."
+                )
                 self._reader._transport.close()
                 self._connectionStatus = API_DISCONNECTED
                 await self._send_update_callback()
                 return
-
 
     async def _send_queue(self):
         while True:
@@ -222,7 +317,9 @@ class IntesisHome():
                     # Create asyncio socket
                     _LOGGER.debug(
                         "Opening connection to {type} API at {server}:{port}".format(
-                            type=self._device_type, server=self._cmdServer, port=self._cmdServerPort
+                            type=self._device_type,
+                            server=self._cmdServer,
+                            port=self._cmdServerPort,
                         )
                     )
 
@@ -244,7 +341,7 @@ class IntesisHome():
             except Exception as e:
                 _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
                 self._connectionStatus = API_DISCONNECTED
-    
+
     async def stop(self):
         """Public method for shutting down connectivity with the envisalink."""
         self._connectionStatus = API_DISCONNECTED
@@ -257,6 +354,13 @@ class IntesisHome():
     def get_devices(self):
         """Public method to return the state of all IntesisHome devices"""
         return self._devices
+
+    def get_device(self, deviceId):
+        """Public method to return the state of the specified device"""
+        return self._devices.get(str(deviceId))
+
+    def get_device_property(self, deviceId, property_name):
+        return self._devices[str(deviceId)].get(property_name)
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device. Notifies subscribers if sendCallback True."""
@@ -272,7 +376,9 @@ class IntesisHome():
         self._token = None
 
         try:
-            async with self._webSession.post(url=self._api_url, data=get_status) as resp:
+            async with self._webSession.post(
+                url=self._api_url, data=get_status
+            ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)
 
@@ -296,7 +402,7 @@ class IntesisHome():
                         self._devices[device["id"]] = {
                             "name": device["name"],
                             "widgets": device["widgets"],
-                            "model": device["modelId"]
+                            "model": device["modelId"],
                         }
                         _LOGGER.debug(repr(self._devices))
 
@@ -314,7 +420,7 @@ class IntesisHome():
                     self._update_device_state(deviceId, status["uid"], status["value"])
 
                 if sendcallback:
-                    await self._send_update_callback(deviceId)
+                    await self._send_update_callback(deviceId=deviceId)
         except (aiohttp.client_exceptions.ClientError) as e:
             self._errorMessage = f"Error connecting to {self._device_type} API: {e}"
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
@@ -341,10 +447,12 @@ class IntesisHome():
 
     async def set_fan_speed(self, deviceId, fan: str):
         """Public method to set the fan speed"""
+        config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
+        map_fan_speed_to_int = {v: k for k, v in config_fan_map.items()}
         await self._set_value(
             deviceId,
             COMMAND_MAP["fan_speed"]["uid"],
-            self._devices[deviceId]["fan_speed_list"].index(fan)
+            map_fan_speed_to_int[fan],
         )
 
     async def set_vertical_vane(self, deviceId, vane: str):
@@ -361,7 +469,10 @@ class IntesisHome():
 
     async def _set_value(self, deviceId, uid, value):
         """Internal method to send a command to the API (and connect if necessary)"""
-        message = '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}' % (deviceId, uid, value)
+        message = (
+            '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}'
+            % (deviceId, uid, value)
+        )
         self._sendQueue.put_nowait(message)
 
     def _update_device_state(self, deviceId, uid, value):
@@ -379,11 +490,10 @@ class IntesisHome():
                 self._devices[deviceId][INTESIS_MAP[uid]["name"]] = None
             else:
                 self._devices[deviceId][INTESIS_MAP[uid]["name"]] = value
-            
+
         else:
             # Log unknown UIDs
             self._devices[deviceId][f"unknown_uid_{uid}"] = value
-
 
     def _update_rssi(self, deviceId, rssi):
         """Internal method to update the wireless signal strength."""
@@ -429,29 +539,15 @@ class IntesisHome():
     def get_fan_speed(self, deviceId) -> str:
         """Public method returns the current fan speed."""
         fan_speed_int = self._devices[str(deviceId)].get("fan_speed")
-        return self.get_fan_speed_list(deviceId)[fan_speed_int]
+        config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
+
+        return config_fan_map[fan_speed_int]
 
     def get_fan_speed_list(self, deviceId):
         """Public method to return the list of possible fan speeds."""
-        fan_speed_list = self._devices[str(deviceId)].get("fan_speed_list")
-
-        if not fan_speed_list:
-            config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
-            fan_speed_list = []
-
-            if config_fan_map & SUPPORT_FAN_AUTO:
-                fan_speed_list = ["auto"]
-
-            if config_fan_map & SUPPORT_FAN_SP5:
-                fan_speed_list.extend(["quiet", "low", "medium", "high", "maximum"])
-            elif config_fan_map & SUPPORT_FAN_SP4:
-                fan_speed_list.extend(["quiet", "low", "medium", "high"])
-            elif config_fan_map & SUPPORT_FAN_SP3:
-                fan_speed_list.extend(["low", "medium", "high"])
-
-        self._devices[str(deviceId)]["fan_speed_list"] = fan_speed_list
-        
-        return fan_speed_list
+        config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
+        if config_fan_map:
+            return list(config_fan_map.values())
 
     def get_device_name(self, deviceId) -> str:
         return self._devices[str(deviceId)].get("name")
@@ -518,14 +614,13 @@ class IntesisHome():
         swing = self._devices[str(deviceId)].get("hvane")
         return swing
 
-    async def _send_update_callback(self, deviceId):
+    async def _send_update_callback(self, deviceId=None):
         """Internal method to notify all update callback subscribers."""
         if self._updateCallbacks:
             for callback in self._updateCallbacks:
                 await callback(device_id=str(deviceId))
         else:
             _LOGGER.debug("Update callback has not been set by client")
-
 
     @property
     def is_connected(self) -> bool:
@@ -550,6 +645,7 @@ class IntesisHome():
     async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._updateCallbacks.append(method)
+
 
 def help():
     print("syntax: pyintesishome [options] command [command_args]")
@@ -598,7 +694,9 @@ async def main(loop):
         help()
         sys.exit(0)
 
-    controller = IntesisHome(args.user, args.password, loop=loop, device_type=args.device)
+    controller = IntesisHome(
+        args.user, args.password, loop=loop, device_type=args.device
+    )
     await controller.connect()
     print(repr(controller.get_devices()))
     await controller.stop()
