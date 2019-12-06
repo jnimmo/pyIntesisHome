@@ -18,6 +18,13 @@ API_CONNECTING = "Connecting"
 API_AUTHENTICATED = "Connected"
 API_AUTH_FAILED = "Wrong username/password"
 
+SUPPORT_FAN_AUTO = 1
+SUPPORT_FAN_SP1 = 2
+SUPPORT_FAN_SP2 = 4 
+SUPPORT_FAN_SP3 = 8
+SUPPORT_FAN_SP4 = 16
+SUPPORT_FAN_SP5 = 32
+
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
     2: {
