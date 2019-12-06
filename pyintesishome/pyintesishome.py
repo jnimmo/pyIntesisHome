@@ -20,7 +20,7 @@ API_AUTH_FAILED = "Wrong username/password"
 
 SUPPORT_FAN_AUTO = 1
 SUPPORT_FAN_SP1 = 2
-SUPPORT_FAN_SP2 = 4 
+SUPPORT_FAN_SP2 = 4
 SUPPORT_FAN_SP3 = 8
 SUPPORT_FAN_SP4 = 16
 SUPPORT_FAN_SP5 = 32
@@ -307,7 +307,7 @@ class IntesisHome:
                     self._update_rssi(resp["data"]["deviceId"], resp["data"]["rssi"])
                     if resp["data"]["uid"] != 60002:
                         await self._send_update_callback(
-                            deviceId=resp["data"]["deviceId"]
+                            deviceId=str(resp["data"]["deviceId"])
                         )
                 elif resp["command"] == "rssi":
                     # Wireless strength has changed
@@ -474,7 +474,7 @@ class IntesisHome:
                 self._update_device_state(deviceId, status["uid"], status["value"])
 
             if sendcallback:
-                await self._send_update_callback(deviceId=deviceId)
+                await self._send_update_callback(deviceId=str(deviceId))
 
         return self._authToken
 

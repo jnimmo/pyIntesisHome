@@ -2,7 +2,11 @@
 import logging
 from random import randrange
 
-from pyintesishome import AuthenticationError, ConnectionError, IntesisHome
+from pyintesishome import (
+    ConnectionError as IHConnectionError,
+    IHAuthenticationError,
+    IntesisHome,
+)
 import voluptuous as vol
 
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateDevice
@@ -93,13 +97,12 @@ async def async_setup_platform(hass, config, async_add_entities, discovery_info=
     )
     try:
         await controller.poll_status()
-    except AuthenticationError:
+    except IHAuthenticationError:
         _LOGGER.error("Invalid username or password")
         return
-    except ConnectionError:
+    except IHConnectionError:
         _LOGGER.error("Error connecting to the %s server", device_type)
         raise PlatformNotReady
-        return
 
     ih_devices = controller.get_devices()
     if ih_devices:
@@ -163,7 +166,10 @@ class IntesisAC(ClimateDevice):
         """Subscribe to event updates."""
         _LOGGER.debug("Added climate device with state: %s", repr(self._ih_device))
         await self._controller.add_update_callback(self.async_update_callback)
-        await self._controller.connect()
+        try:
+            await self._controller.connect()
+        except IHConnectionError as e:
+            _LOGGER.error("Exception connecting to IntesisHome:  %s", repr(e))
 
     @property
     def name(self):
@@ -309,7 +315,7 @@ class IntesisAC(ClimateDevice):
     async def async_update_callback(self, device_id=None):
         """Let HA know there has been an update from the controller."""
         # Track changes in connection state
-        if not self._controller.is_connected and self._connected is True:
+        if not self._controller.is_connected and self._connected:
             # Connection has dropped
             self._connected = False
             reconnect_minutes = 1 + randrange(10)
@@ -323,12 +329,12 @@ class IntesisAC(ClimateDevice):
                 self.hass, reconnect_minutes * 60, self._controller.connect()
             )
 
-        if self._controller.is_connected and self._connected is False:
+        if self._controller.is_connected and not self._connected:
             # Connection has been restored
             self._connected = True
-            _LOGGER.debug("Connection to %s API was restored.", self._device_type)
+            _LOGGER.debug("Connection to %s API was restored", self._device_type)
 
-        if self._device_id == str(device_id) or not device_id:
+        if not device_id or self._device_id == device_id:
             # Update all devices if no device_id was specified
             _LOGGER.debug(
                 "%s API sent a status update for device %s",
