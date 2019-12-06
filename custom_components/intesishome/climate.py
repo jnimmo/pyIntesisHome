@@ -2,11 +2,7 @@
 import logging
 from random import randrange
 
-from pyintesishome import (
-    ConnectionError as IHConnectionError,
-    IHAuthenticationError,
-    IntesisHome,
-)
+from pyintesishome import IHAuthenticationError, IHConnectionError, IntesisHome
 import voluptuous as vol
 
 from homeassistant.components.climate import PLATFORM_SCHEMA, ClimateDevice

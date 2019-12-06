@@ -1,3 +1,3 @@
 from .pyintesishome import IntesisHome
-from .pyintesishome import AuthenticationError
-from .pyintesishome import ConnectionError
+from .pyintesishome import IHAuthenticationError
+from .pyintesishome import IHConnectionError

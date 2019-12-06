@@ -226,11 +226,11 @@ API_URL = {
 API_VER = {DEVICE_AIRCONWITHME: "1.6.2", DEVICE_INTESISHOME: "1.8.5"}
 
 
-class ConnectionError(Exception):
+class IHConnectionError(Exception):
     pass
 
 
-class AuthenticationError(ConnectionError):
+class IHAuthenticationError(ConnectionError):
     pass
 
 
@@ -426,15 +426,15 @@ class IntesisHome:
         except (aiohttp.client_exceptions.ClientError) as e:
             self._errorMessage = f"Error connecting to {self._device_type} API: {e}"
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
-            raise ConnectionError
+            raise IHConnectionError
         except (aiohttp.client_exceptions.ClientConnectorError) as e:
-            raise ConnectionError
+            raise IHConnectionError
 
         if status_response:
             if "errorCode" in status_response:
                 self._errorMessage = status_response["errorMessage"]
                 _LOGGER.error("Error from API: ", self._errorMessage)
-                raise AuthenticationError()
+                raise IHAuthenticationError()
                 return
 
             config = status_response.get("config")
