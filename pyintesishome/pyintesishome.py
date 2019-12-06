@@ -1,9 +1,10 @@
-import asyncio
-import logging
-import aiohttp
-import json
-import sys
 import argparse
+import asyncio
+import json
+import logging
+import sys
+
+import aiohttp
 
 _LOGGER = logging.getLogger("pyintesishome")
 
@@ -210,6 +211,21 @@ COMMAND_MAP = {
     "setpoint": {"uid": 9},
 }
 
+API_URL = {
+    DEVICE_AIRCONWITHME: "https://user.airconwithme.com/api.php/get/control",
+    DEVICE_INTESISHOME: "https://user.intesishome.com/api.php/get/control",
+}
+
+API_VER = {DEVICE_AIRCONWITHME: "1.6.2", DEVICE_INTESISHOME: "1.8.5"}
+
+
+class ConnectionError(Exception):
+    pass
+
+
+class AuthenticationError(ConnectionError):
+    pass
+
 
 class IntesisHome:
     def __init__(
@@ -222,27 +238,26 @@ class IntesisHome:
     ):
         # Select correct API for device type
         self._device_type = device_type
-        if device_type == DEVICE_AIRCONWITHME:
-            self._api_url = "https://user.airconwithme.com/api.php/get/control"
-            self._api_ver = "1.6.2"
-        else:
-            self._api_url = "https://user.intesishome.com/api.php/get/control"
-            self._api_ver = "1.8.5"
+        self._api_url = API_URL[device_type]
+        self._api_ver = API_VER[device_type]
         self._username = username
         self._password = password
         self._cmdServer = None
         self._cmdServerPort = None
+        self._connectionRetires = 0
+        self._authToken = None
         self._devices = {}
-        self._connectionStatus = API_DISCONNECTED
+        self._connected = False
+        self._connecting = False
         self._sendQueue = asyncio.Queue()
-        self._transport = None
-        self._protocol = None
+        self._sendQueueTask = None
         self._updateCallbacks = []
         self._errorMessage = None
         self._webSession = websession
         self._ownSession = False
         self._reader = None
         self._writer = None
+        self._reconnectionAttempt = 0
 
         if loop:
             _LOGGER.debug("Using the provided event loop")
@@ -271,7 +286,10 @@ class IntesisHome:
                     # New connection success
                     if resp["data"]["status"] == "ok":
                         _LOGGER.info(f"{self._device_type} succesfully authenticated")
-                        self._connectionStatus = API_AUTHENTICATED
+                        self._connected = True
+                        self._connecting = False
+                        self._connectionRetires = 0
+                        await self._send_update_callback()
                 elif resp["command"] == "status":
                     # Value has changed
                     self._update_device_state(
@@ -291,62 +309,82 @@ class IntesisHome:
                 _LOGGER.error(
                     f"pyIntesisHome lost connection to the {self._device_type} server."
                 )
+
+                self._connected = False
+                self._connecting = False
+                self._authToken = None
                 self._reader._transport.close()
-                self._connectionStatus = API_DISCONNECTED
+                self._writer._transport.close()
+                self._sendQueueTask.cancel()
                 await self._send_update_callback()
                 return
 
     async def _send_queue(self):
-        while True:
+        while self._connected or self._connecting:
             data = await self._sendQueue.get()
             try:
                 self._writer.write(data.encode("ascii"))
                 await self._writer.drain()
                 _LOGGER.debug(f"Sent command {data}")
-            except e:
-                _LOGGER.error(f"Exception: {e}")
+            except Exception as e:
+                _LOGGER.error(f"Exception: {repr(e)}")
+                return
 
     async def connect(self):
         """Public method for connecting to IntesisHome/Airconwithme API"""
-        if self._connectionStatus == API_DISCONNECTED:
-            self._connectionStatus = API_CONNECTING
-            try:
-                # Get authentication token over HTTP POST
-                await self.poll_status()
-                if self._cmdServer and self._cmdServerPort and self._token:
-                    # Create asyncio socket
+        if not self._connected and not self._connecting:
+            self._connecting = True
+            self._connectionRetires = 0
+
+            # Get authentication token over HTTP POST
+            while not self._authToken:
+                if self._connectionRetires:
                     _LOGGER.debug(
-                        "Opening connection to {type} API at {server}:{port}".format(
-                            type=self._device_type,
-                            server=self._cmdServer,
-                            port=self._cmdServerPort,
-                        )
+                        "Couldn't get API details, retrying in %i minutes", retries
                     )
+                    await asyncio.sleep(retries * 60)
+                self._authToken = await self.poll_status()
+                self._connectionRetires += 1
 
-                    self._reader, self._writer = await asyncio.open_connection(
-                        self._cmdServer, self._cmdServerPort
-                    )
+            _LOGGER.debug(
+                "Opening connection to %s API at %s:%i",
+                self._device_type,
+                self._cmdServer,
+                self._cmdServerPort,
+            )
 
-                    # Authenticate
-                    authMsg = '{"command":"connect_req","data":{"token":%s}}' % (
-                        self._token
-                    )
-                    self._writer.write(authMsg.encode("ascii"))
-                    await self._writer.drain()
-                    _LOGGER.debug(f"Data sent: {authMsg}")
+            try:
+                # Create asyncio socket
+                self._reader, self._writer = await asyncio.open_connection(
+                    self._cmdServer, self._cmdServerPort
+                )
 
-                    self._eventLoop.create_task(self._handle_packets())
-                    self._eventLoop.create_task(self._send_queue())
+                # Authenticate
+                authMsg = '{"command":"connect_req","data":{"token":%s}}' % (
+                    self._authToken
+                )
+                # Clear the OTP
+                self._authToken = None
+                self._writer.write(authMsg.encode("ascii"))
+                await self._writer.drain()
+                _LOGGER.debug("Data sent: %s", authMsg)
 
+                self._eventLoop.create_task(self._handle_packets())
+                self._sendQueueTask = self._eventLoop.create_task(self._send_queue())
             except Exception as e:
                 _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
-                self._connectionStatus = API_DISCONNECTED
+                self._connected = False
+                self._connecting = False
+                self._sendQueueTask.cancel()
 
     async def stop(self):
         """Public method for shutting down connectivity with the envisalink."""
-        self._connectionStatus = API_DISCONNECTED
-        if self._transport:
-            self._transport.close()
+        self._connected = False
+        if self._writer._transport:
+            self._writer._transport.close()
+
+        if self._reader._transport:
+            self._reader._transport.close()
 
         if self._ownSession:
             await self._webSession.close()
@@ -371,67 +409,74 @@ class IntesisHome:
             "version": self._api_ver,
         }
 
-        self._cmdServer = None
-        self._cmdServerPort = None
-        self._token = None
-
+        status_response = None
         try:
             async with self._webSession.post(
                 url=self._api_url, data=get_status
             ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)
-
-                if "errorCode" in status_response:
-                    _LOGGER.error(
-                        f"Error from {self._device_type} API: {status_response['errorMessage']}"
-                    )
-                    self._connectionStatus = API_DISCONNECTED
-                    return
-
-                self._cmdServer = status_response["config"]["serverIP"]
-                self._cmdServerPort = status_response["config"]["serverPort"]
-                self._token = status_response["config"]["token"]
-                _LOGGER.debug(
-                    f"Server: {self._cmdServer}:{self._cmdServerPort}, Token: {self._token}"
-                )
-
-                # Setup devices
-                for installation in status_response["config"]["inst"]:
-                    for device in installation["devices"]:
-                        self._devices[device["id"]] = {
-                            "name": device["name"],
-                            "widgets": device["widgets"],
-                            "model": device["modelId"],
-                        }
-                        _LOGGER.debug(repr(self._devices))
-
-                # Update device status
-                for status in status_response["status"]["status"]:
-                    deviceId = str(status["deviceId"])
-
-                    # Handle devices which don't appear in installation
-                    if deviceId not in self._devices:
-                        self._devices[deviceId] = {
-                            "name": "Device " + deviceId,
-                            "widgets": [42],
-                        }
-
-                    self._update_device_state(deviceId, status["uid"], status["value"])
-
-                if sendcallback:
-                    await self._send_update_callback(deviceId=deviceId)
         except (aiohttp.client_exceptions.ClientError) as e:
             self._errorMessage = f"Error connecting to {self._device_type} API: {e}"
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
-            self._connectionStatus = API_DISCONNECTED
+            raise ConnectionError
+        except (aiohttp.client_exceptions.ClientConnectorError) as e:
+            raise ConnectionError
+
+        if status_response:
+            if "errorCode" in status_response:
+                self._errorMessage = status_response["errorMessage"]
+                _LOGGER.error("Error from API: ", self._errorMessage)
+                raise AuthenticationError()
+                return
+
+            config = status_response.get("config")
+            if config:
+                self._cmdServer = config.get("serverIP")
+                self._cmdServerPort = config.get("serverPort")
+                self._authToken = config.get("token")
+
+                _LOGGER.debug(
+                    "Server: %s:%i, Token: %s",
+                    self._cmdServer,
+                    self._cmdServerPort,
+                    self._authToken,
+                )
+
+            # Setup devices
+            for installation in config.get("inst"):
+                for device in installation.get("devices"):
+                    self._devices[device["id"]] = {
+                        "name": device["name"],
+                        "widgets": device["widgets"],
+                        "model": device["modelId"],
+                    }
+                    _LOGGER.debug(repr(self._devices))
+
+            # Update device status
+            for status in status_response["status"]["status"]:
+                deviceId = str(status["deviceId"])
+
+                # Handle devices which don't appear in installation
+                if deviceId not in self._devices:
+                    self._devices[deviceId] = {
+                        "name": "Device " + deviceId,
+                        "widgets": [42],
+                    }
+
+                self._update_device_state(deviceId, status["uid"], status["value"])
+
+            if sendcallback:
+                await self._send_update_callback(deviceId=deviceId)
+
+        return self._authToken
 
     def get_run_hours(self, deviceId) -> str:
         """Public method returns the run hours of the IntesisHome controller."""
         run_hours = self._devices[str(deviceId)].get("working_hours")
         return run_hours
 
-    async def _set_mode(self, deviceId, mode: str):
+    async def set_mode(self, deviceId, mode: str):
         """Internal method for setting the mode with a string value."""
         if mode in COMMAND_MAP["mode"]["values"]:
             await self._set_value(
@@ -450,9 +495,7 @@ class IntesisHome:
         config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
         map_fan_speed_to_int = {v: k for k, v in config_fan_map.items()}
         await self._set_value(
-            deviceId,
-            COMMAND_MAP["fan_speed"]["uid"],
-            map_fan_speed_to_int[fan],
+            deviceId, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
         )
 
     async def set_vertical_vane(self, deviceId, vane: str):
@@ -502,23 +545,23 @@ class IntesisHome:
 
     async def set_mode_heat(self, deviceId):
         """Public method to set device to heat asynchronously."""
-        await self._set_mode(deviceId, "heat")
+        await self.set_mode(deviceId, "heat")
 
     async def set_mode_cool(self, deviceId):
         """Public method to set device to cool asynchronously."""
-        await self._set_mode(deviceId, "cool")
+        await self.set_mode(deviceId, "cool")
 
     async def set_mode_fan(self, deviceId):
         """Public method to set device to fan asynchronously."""
-        await self._set_mode(deviceId, "fan")
+        await self.set_mode(deviceId, "fan")
 
     async def set_mode_auto(self, deviceId):
         """Public method to set device to auto asynchronously."""
-        await self._set_mode(deviceId, "auto")
+        await self.set_mode(deviceId, "auto")
 
     async def set_mode_dry(self, deviceId):
         """Public method to set device to dry asynchronously."""
-        await self._set_mode(deviceId, "dry")
+        await self.set_mode(deviceId, "dry")
 
     async def set_power_off(self, deviceId):
         """Public method to turn off the device asynchronously."""
@@ -618,14 +661,18 @@ class IntesisHome:
         """Internal method to notify all update callback subscribers."""
         if self._updateCallbacks:
             for callback in self._updateCallbacks:
-                await callback(device_id=str(deviceId))
+                await callback(device_id=deviceId)
         else:
             _LOGGER.debug("Update callback has not been set by client")
 
     @property
     def is_connected(self) -> bool:
         """Returns true if the TCP connection is established."""
-        return self._connectionStatus == API_AUTHENTICATED
+        return self._connected
+
+    @property
+    def connection_retries(self) -> int:
+        return self._connectionRetires
 
     @property
     def error_message(self) -> str:
@@ -640,7 +687,7 @@ class IntesisHome:
     @property
     def is_disconnected(self) -> bool:
         """Returns true when the TCP connection is disconnected and idle."""
-        return self._connectionStatus == API_DISCONNECTED
+        return not self._connected and not self._connecting
 
     async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
