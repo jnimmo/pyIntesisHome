@@ -534,7 +534,7 @@ class IntesisHome:
             if "values" in INTESIS_MAP[uid]:
                 self._devices[deviceId][INTESIS_MAP[uid]["name"]] = INTESIS_MAP[uid][
                     "values"
-                ][value]
+                ].get(value, value)
             # If the UID has a null value set the value to none
             elif "null" in INTESIS_MAP[uid] and value == INTESIS_MAP[uid]["null"]:
                 self._devices[deviceId][INTESIS_MAP[uid]["name"]] = None
