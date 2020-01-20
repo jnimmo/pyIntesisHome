@@ -176,7 +176,7 @@ INTESIS_MAP = {
     183: {"name": "filter_clean"},
     184: {"name": "filter_due_hours"},
     191: {"name": "uid_binary_input_sleep_mode"},
-    50000: {"name": "external_led", "values": {0: "off", 1: "on"}},
+    50000: {"name": "external_led", "values": {0: "off", 1: "on", 2: "blinking only on change"}},
     50001: {"name": "internal_led", "values": {0: "off", 1: "on"}},
     50002: {"name": "internal_temperature_offset"},
     50003: {"name": "temp_limitation", "values": {0: "off", 2: "on"}},
