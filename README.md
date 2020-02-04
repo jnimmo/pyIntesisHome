@@ -3,7 +3,7 @@ This project is a python3 library for interfacing with the IntesisHome and airco
 It is fully asynchronous using the aiohttp library, and utilises the private API used by the IntesisHome mobile apps.
 
 ### Home Assistant
-To use with Home Assistant, add the following to your configuration.yaml 
+To use with [Home Assistant](https://www.home-assistant.io/integrations/intesishome/), add the following to your configuration.yaml 
 
 ```yaml
 climate:
