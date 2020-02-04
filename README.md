@@ -24,16 +24,26 @@ For IntesisBox support, see [hass-intesisbox](https://github.com/jnimmo/hass-int
  - Callbacks to be notified of state updates can be added with the add_callback() method.
 
 ### Library basic example
-```
-controller = IntesisHome(username, password)
-controller.poll_status()
+```python
+import asyncio
+from pyintesishome import IntesisHome
 
-if controller.get_power_state('12015601252591') == 'off':
-  controller.set_power_on('12015601252591')
+async def main(loop):
+    controller = IntesisHome('username', 'password', loop=loop, device_type='airconwithme')
+    await controller.connect()
+    print(repr(controller.get_devices()))
+    # Imagine you have a device with id 12015601252591
+    if await controller.get_power_state('12015601252591') == 'off':
+        await controller.set_power_on('12015601252591')
 
-controller.set_mode_heat('12015601252591')
-controller.set_temperature('12015601252591', 22)
-controller.set_fan_speed('12015601252591','quiet')
+    await controller.set_mode_heat('12015601252591')
+    await controller.set_temperature('12015601252591', 22)
+    await controller.set_fan_speed('12015601252591','quiet')
+
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    result = loop.run_until_complete(main(loop))
+
 ```
 ### Control methods
 
