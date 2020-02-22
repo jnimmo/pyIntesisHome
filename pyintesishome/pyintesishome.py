@@ -9,6 +9,7 @@ import aiohttp
 _LOGGER = logging.getLogger("pyintesishome")
 
 INTESIS_CMD_STATUS = '{"status":{"hash":"x"},"config":{"hash":"x"}}'
+INTESIS_NULL = 32768
 
 DEVICE_INTESISHOME = "IntesisHome"
 DEVICE_AIRCONWITHME = "airconwithme"
@@ -17,13 +18,6 @@ API_DISCONNECTED = "Disconnected"
 API_CONNECTING = "Connecting"
 API_AUTHENTICATED = "Connected"
 API_AUTH_FAILED = "Wrong username/password"
-
-SUPPORT_FAN_AUTO = 1
-SUPPORT_FAN_SP1 = 2
-SUPPORT_FAN_SP2 = 4
-SUPPORT_FAN_SP3 = 8
-SUPPORT_FAN_SP4 = 16
-SUPPORT_FAN_SP5 = 32
 
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
@@ -36,12 +30,16 @@ INTESIS_MAP = {
         "name": "vvane",
         "values": {
             0: "auto/stop",
-            10: "swing",
             1: "manual1",
             2: "manual2",
             3: "manual3",
             4: "manual4",
             5: "manual5",
+            6: "manual6",
+            7: "manual7",
+            8: "manual8",
+            9: "manual9",
+            10: "swing",
         },
     },
     6: {
@@ -56,7 +54,7 @@ INTESIS_MAP = {
             5: "manual5",
         },
     },
-    9: {"name": "setpoint", "null": 32768},
+    9: {"name": "setpoint"},
     10: {"name": "temperature"},
     12: {"name": "remote_controller_lock"},
     13: {"name": "working_hours"},
@@ -74,7 +72,7 @@ INTESIS_MAP = {
     },
     44: {
         "name": "tank_working_mode",
-        "values": {0: "comfort", 1: "eco", 2: "powerful", -32768: "N/A"},
+        "values": {0: "comfort", 1: "eco", 2: "powerful"},
     },
     45: {"name": "tank_water_temperature"},
     46: {"name": "solar_status"},
@@ -88,7 +86,7 @@ INTESIS_MAP = {
     56: {"name": "cool_water_setpoint_temperature"},
     57: {"name": "tank_setpoint_temperature"},
     58: {
-        "name": "user_mode",
+        "name": "operating_mode",
         "values": {
             0: "maintenance",
             1: "heat",
@@ -101,7 +99,10 @@ INTESIS_MAP = {
         },
     },
     60: {"name": "heat_8_10"},
-    61: {"name": "config_mode_map"},  # 31 = auto, heat, cool, dry, fan,
+    61: {
+        "name": "config_mode_map",
+        "values": {31: {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"}},
+    },  # 31 = auto, heat, cool, dry, fan,
     62: {"name": "runtime_mode_restrictions"},
     63: {"name": "config_horizontal_vanes"},
     64: {"name": "config_vertical_vanes"},
@@ -120,7 +121,21 @@ INTESIS_MAP = {
     },
     68: {"name": "instant_power_consumption"},
     69: {"name": "accumulated_power_consumption"},
-    75: {"name": "config_operating_mode"},
+    75: {
+        "name": "config_operating_mode",
+        "values": {
+            49: {1: "heat", 5: "cool", 6: "auto"},
+            127: {
+                1: "heat",
+                2: "heat+tank",
+                3: "tank",
+                4: "cool+tank",
+                5: "cool",
+                6: "auto",
+                7: "auto+tank",
+            },
+        },
+    },
     77: {"name": "config_vanes_pulse"},
     80: {"name": "aquarea_tank_consumption"},
     81: {"name": "aquarea_cool_consumption"},
@@ -152,13 +167,12 @@ INTESIS_MAP = {
             18: 540,
             19: 570,
             20: 600,
-            -32768: "N/A",
         },
     },
     107: {"name": "aquarea_working_hours"},
     123: {"name": "ext_thermo_control", "values": {85: "off", 170: "on"}},
     124: {"name": "tank_present", "values": {85: "off", 170: "on"}},
-    125: {"name": "solar_priority", "values": {85: "off", 170: "on", -32768: "N/A"}},
+    125: {"name": "solar_priority", "values": {85: "off", 170: "on"}},
     134: {"name": "heat_low_outdoor_set_temperature"},
     135: {"name": "heat_high_outdoor_set_temperature"},
     136: {"name": "heat_low_water_set_temperature"},
@@ -175,8 +189,13 @@ INTESIS_MAP = {
     182: {"name": "mainenance_wo_reset"},
     183: {"name": "filter_clean"},
     184: {"name": "filter_due_hours"},
+    185: {"name": "uid_185"},
+    186: {"name": "uid_186"},
     191: {"name": "uid_binary_input_sleep_mode"},
-    50000: {"name": "external_led", "values": {0: "off", 1: "on", 2: "blinking only on change"}},
+    50000: {
+        "name": "external_led",
+        "values": {0: "off", 1: "on", 2: "blinking only on change"},
+    },
     50001: {"name": "internal_led", "values": {0: "off", 1: "on"}},
     50002: {"name": "internal_temperature_offset"},
     50003: {"name": "temp_limitation", "values": {0: "off", 2: "on"}},
@@ -190,6 +209,22 @@ INTESIS_MAP = {
 COMMAND_MAP = {
     "power": {"uid": 1, "values": {"off": 0, "on": 1}},
     "mode": {"uid": 2, "values": {"auto": 0, "heat": 1, "dry": 2, "fan": 3, "cool": 4}},
+    "operating_mode": {
+        "uid": 58,
+        "values": {
+            "heat": 1,
+            "heat+tank": 2,
+            "tank": 3,
+            "cool+tank": 4,
+            "cool": 5,
+            "auto": 6,
+            "auto+tank": 7,
+        },
+    },
+    "climate_working_mode": {
+        "uid": 42,
+        "values": {"comfort": 0, "eco": 1, "powerful": 2},
+    },
     "fan_speed": {"uid": 4},
     "vvane": {
         "uid": 5,
@@ -485,11 +520,24 @@ class IntesisHome:
 
     async def set_mode(self, deviceId, mode: str):
         """Internal method for setting the mode with a string value."""
-        if mode in COMMAND_MAP["mode"]["values"]:
+        mode_control = "mode"
+        if "mode" not in self._devices[str(deviceId)]:
+            mode_control = "operating_mode"
+
+        if mode in COMMAND_MAP[mode_control]["values"]:
             await self._set_value(
                 deviceId,
-                COMMAND_MAP["mode"]["uid"],
-                COMMAND_MAP["mode"]["values"][mode],
+                COMMAND_MAP[mode_control]["uid"],
+                COMMAND_MAP[mode_control]["values"][mode],
+            )
+
+    async def set_preset_mode(self, deviceId, preset: str):
+        """Internal method for setting the mode with a string value."""
+        if preset in COMMAND_MAP["climate_working_mode"]["values"]:
+            await self._set_value(
+                deviceId,
+                COMMAND_MAP["climate_working_mode"]["uid"],
+                COMMAND_MAP["climate_working_mode"]["values"][preset],
             )
 
     async def set_temperature(self, deviceId, setpoint):
@@ -530,17 +578,18 @@ class IntesisHome:
         deviceId = str(deviceId)
 
         if uid in INTESIS_MAP:
-            # Translate known UIDs to configuration item names
-            if "values" in INTESIS_MAP[uid]:
-                self._devices[deviceId][INTESIS_MAP[uid]["name"]] = INTESIS_MAP[uid][
-                    "values"
-                ].get(value, value)
-            # If the UID has a null value set the value to none
-            elif "null" in INTESIS_MAP[uid] and value == INTESIS_MAP[uid]["null"]:
+            # If the value is null (32768), set as None
+            if value == INTESIS_NULL:
                 self._devices[deviceId][INTESIS_MAP[uid]["name"]] = None
             else:
-                self._devices[deviceId][INTESIS_MAP[uid]["name"]] = value
-
+                # Translate known UIDs to configuration item names
+                value_map = INTESIS_MAP[uid].get("values")
+                if value_map:
+                    self._devices[deviceId][INTESIS_MAP[uid]["name"]] = value_map.get(
+                        value, value
+                    )
+                else:
+                    self._devices[deviceId][INTESIS_MAP[uid]["name"]] = value
         else:
             # Log unknown UIDs
             self._devices[deviceId][f"unknown_uid_{uid}"] = value
@@ -584,20 +633,42 @@ class IntesisHome:
 
     def get_mode(self, deviceId) -> str:
         """Public method returns the current mode of operation."""
-        return self._devices[str(deviceId)].get("mode")
+        if "mode" in self._devices[str(deviceId)]:
+            return self._devices[str(deviceId)]["mode"]
+        elif "operating_mode" in self._devices[str(deviceId)]:
+            return self._devices[str(deviceId)]["operating_mode"]
 
-    def get_fan_speed(self, deviceId) -> str:
+    def get_mode_list(self, deviceId) -> list:
+        """Public method to return the list of possible fan speeds."""
+        config_mode_map = self._devices[str(deviceId)].get("config_mode_map")
+        if config_mode_map:
+            return list(config_mode_map.values())
+        else:
+            config_operating_mode = self._devices[str(deviceId)].get(
+                "config_operating_mode"
+            )
+            if config_operating_mode:
+                return list(config_operating_mode.values())
+            else:
+                return list()
+
+    def get_fan_speed(self, deviceId):
         """Public method returns the current fan speed."""
-        fan_speed_int = self._devices[str(deviceId)].get("fan_speed")
         config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
 
-        return config_fan_map[fan_speed_int]
+        if "fan_speed" in self._devices[str(deviceId)] and config_fan_map:
+            fan_speed_int = self._devices[str(deviceId)].get("fan_speed")
+            return config_fan_map.get(fan_speed_int)
+        else:
+            return None
 
     def get_fan_speed_list(self, deviceId):
         """Public method to return the list of possible fan speeds."""
         config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
         if config_fan_map:
             return list(config_fan_map.values())
+        else:
+            return None
 
     def get_device_name(self, deviceId) -> str:
         return self._devices[str(deviceId)].get("name")
@@ -606,13 +677,55 @@ class IntesisHome:
         """Public method returns the current power state."""
         return self._devices[str(deviceId)].get("power")
 
+    def get_instant_power_consumption(self, deviceId) -> int:
+        """Public method returns the current power state."""
+        instant_power = self._devices[str(deviceId)].get("instant_power_consumption")
+        if instant_power:
+            return int(instant_power)
+
+    def get_total_power_consumption(self, deviceId) -> int:
+        """Public method returns the current power state."""
+        accumulated_power = self._devices[str(deviceId)].get(
+            "accumulated_power_consumption"
+        )
+        if accumulated_power:
+            return int(accumulated_power)
+
+    def get_cool_power_consumption(self, deviceId) -> int:
+        """Public method returns the current power state."""
+        aquarea_cool = self._devices[str(deviceId)].get("aquarea_cool_consumption")
+        if aquarea_cool:
+            return int(aquarea_cool)
+
+    def get_heat_power_consumption(self, deviceId) -> int:
+        """Public method returns the current power state."""
+        aquarea_heat = self._devices[str(deviceId)].get("aquarea_heat_consumption")
+        if aquarea_heat:
+            return int(aquarea_heat)
+
+    def get_tank_power_consumption(self, deviceId) -> int:
+        """Public method returns the current power state."""
+        aquarea_tank = self._devices[str(deviceId)].get("aquarea_tank_consumption")
+        if aquarea_tank:
+            return int(aquarea_tank)
+
+    def get_preset_mode(self, deviceId) -> str:
+        return self._devices[str(deviceId)].get("climate_working_mode")
+
     def is_on(self, deviceId) -> bool:
         """Return true if the controlled device is turned on"""
         return self._devices[str(deviceId)].get("power") == "on"
 
-    def has_swing_control(self, deviceId) -> bool:
-        """Return true if the device supports swing modes."""
-        return 42 in self._devices[str(deviceId)].get("widgets")
+    def has_vertical_swing(self, deviceId) -> bool:
+        vvane_config = self._devices[str(deviceId)].get("config_vertical_vanes")
+        return vvane_config and vvane_config > 1024
+
+    def has_horizontal_swing(self, deviceId) -> bool:
+        hvane_config = self._devices[str(deviceId)].get("config_horizontal_vanes")
+        return hvane_config and hvane_config > 1024
+
+    def has_setpoint_control(self, deviceId) -> bool:
+        return "setpoint" in self._devices[str(deviceId)]
 
     def get_setpoint(self, deviceId) -> float:
         """Public method returns the target temperature."""
