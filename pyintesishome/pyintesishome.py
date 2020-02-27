@@ -111,6 +111,8 @@ INTESIS_MAP = {
     67: {
         "name": "config_fan_map",
         "values": {
+            6: {1: "low", 2: "high"},
+            7: {0: "auto", 1: "low", 2: "high"},
             14: {1: "low", 2: "medium", 3: "high"},
             15: {0: "auto", 1: "low", 2: "medium", 3: "high"},
             30: {1: "quiet", 2: "low", 3: "medium", 4: "high"},
@@ -382,9 +384,9 @@ class IntesisHome:
             while not self._authToken:
                 if self._connectionRetires:
                     _LOGGER.debug(
-                        "Couldn't get API details, retrying in %i minutes", retries
+                        "Couldn't get API details, retrying in %i minutes", self._connectionRetires
                     )
-                    await asyncio.sleep(retries * 60)
+                    await asyncio.sleep(self._connectionRetires * 60)
                 self._authToken = await self.poll_status()
                 self._connectionRetires += 1
 
