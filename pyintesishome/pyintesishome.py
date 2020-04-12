@@ -643,13 +643,13 @@ class IntesisHome:
     def get_mode_list(self, deviceId) -> list:
         """Public method to return the list of possible fan speeds."""
         config_mode_map = self._devices[str(deviceId)].get("config_mode_map")
-        if config_mode_map:
+        if isinstance(config_mode_map, dict):
             return list(config_mode_map.values())
         else:
             config_operating_mode = self._devices[str(deviceId)].get(
                 "config_operating_mode"
             )
-            if config_operating_mode:
+            if isinstance(config_operating_mode, dict):
                 return list(config_operating_mode.values())
             else:
                 return list()
