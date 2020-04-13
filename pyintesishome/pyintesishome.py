@@ -101,7 +101,21 @@ INTESIS_MAP = {
     60: {"name": "heat_8_10"},
     61: {
         "name": "config_mode_map",
-        "values": {31: {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"}},
+        "values": {
+            1: {0: "auto"},
+            2: {1: "heat"},
+            4: {2: "dry"},
+            8: {3: "fan"},
+            16: {4: "cool"},
+            18: {1: "heat", 4: "cool"},
+            19: {0: "auto", 1: "heat", 4: "cool"},
+            22: {1: "heat", 2: "dry", 4: "cool"},
+            23: {0: "auto", 1: "heat", 2: "dry", 4: "cool"},
+            26: {1: "heat", 3: "fan", 4: "cool"},
+            27: {0: "auto", 1: "heat", 3: "fan", 4: "cool"},
+            30: {1: "heat", 2: "dry", 3: "fan", 4: "cool"},
+            31: {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"},
+        }
     },  # 31 = auto, heat, cool, dry, fan,
     62: {"name": "runtime_mode_restrictions"},
     63: {"name": "config_horizontal_vanes"},
