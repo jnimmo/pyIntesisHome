@@ -484,7 +484,7 @@ class IntesisHome:
         if status_response:
             if "errorCode" in status_response:
                 self._errorMessage = status_response["errorMessage"]
-                _LOGGER.error("Error from API: ", self._errorMessage)
+                _LOGGER.error(f"Error from API {repr(self._errorMessage)}")
                 raise IHAuthenticationError()
                 return
 
