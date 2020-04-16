@@ -19,6 +19,8 @@ API_CONNECTING = "Connecting"
 API_AUTHENTICATED = "Connected"
 API_AUTH_FAILED = "Wrong username/password"
 
+MODE_BITS = {1: "auto", 2: "heat", 4: "dry", 8: "fan", 16: "cool"}
+
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
     2: {
@@ -99,24 +101,7 @@ INTESIS_MAP = {
         },
     },
     60: {"name": "heat_8_10"},
-    61: {
-        "name": "config_mode_map",
-        "values": {
-            1: {0: "auto"},
-            2: {1: "heat"},
-            4: {2: "dry"},
-            8: {3: "fan"},
-            16: {4: "cool"},
-            18: {1: "heat", 4: "cool"},
-            19: {0: "auto", 1: "heat", 4: "cool"},
-            22: {1: "heat", 2: "dry", 4: "cool"},
-            23: {0: "auto", 1: "heat", 2: "dry", 4: "cool"},
-            26: {1: "heat", 3: "fan", 4: "cool"},
-            27: {0: "auto", 1: "heat", 3: "fan", 4: "cool"},
-            30: {1: "heat", 2: "dry", 3: "fan", 4: "cool"},
-            31: {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"},
-        }
-    },  # 31 = auto, heat, cool, dry, fan,
+    61: {"name": "config_mode_map"},
     62: {"name": "runtime_mode_restrictions"},
     63: {"name": "config_horizontal_vanes"},
     64: {"name": "config_vertical_vanes"},
@@ -655,18 +640,13 @@ class IntesisHome:
             return self._devices[str(deviceId)]["operating_mode"]
 
     def get_mode_list(self, deviceId) -> list:
-        """Public method to return the list of possible fan speeds."""
+        """Public method to return the list of device modes."""
+        mode_list = list()
         config_mode_map = self._devices[str(deviceId)].get("config_mode_map")
-        if isinstance(config_mode_map, dict):
-            return list(config_mode_map.values())
-        else:
-            config_operating_mode = self._devices[str(deviceId)].get(
-                "config_operating_mode"
-            )
-            if isinstance(config_operating_mode, dict):
-                return list(config_operating_mode.values())
-            else:
-                return list()
+        for mode_bit in MODE_BITS.keys():
+            if config_mode_map & mode_bit:
+                mode_list.append(MODE_BITS.get(mode_bit))
+        return mode_list
 
     def get_fan_speed(self, deviceId):
         """Public method returns the current fan speed."""

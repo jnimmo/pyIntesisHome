@@ -2,10 +2,10 @@
 from setuptools import setup
 
 setup(name='pyintesishome',
-      version='1.7.3',
+      version='1.7.4',
       description='A python3 library for running asynchronus communications with IntesisHome Smart AC Controllers',
       url='https://github.com/jnimmo/pyIntesisHome',
-      download_url='https://github.com/jnimmo/pyIntesisHome/tarball/1.7.3',
+      download_url='https://github.com/jnimmo/pyIntesisHome/tarball/1.7.4',
       author='James Nimmo',
       author_email='james@nimmo.net.nz',
       license='MIT',
