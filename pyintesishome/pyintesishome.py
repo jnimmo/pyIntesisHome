@@ -3,8 +3,10 @@ import asyncio
 import json
 import logging
 import sys
-
+import socket
 import aiohttp
+
+from datetime import datetime
 
 _LOGGER = logging.getLogger("pyintesishome")
 
@@ -19,7 +21,16 @@ API_CONNECTING = "Connecting"
 API_AUTHENTICATED = "Connected"
 API_AUTH_FAILED = "Wrong username/password"
 
-MODE_BITS = {1: "auto", 2: "heat", 4: "dry", 8: "fan", 16: "cool"}
+CONFIG_MODE_BITS = {1: "auto", 2: "heat", 4: "dry", 8: "fan", 16: "cool"}
+OPERATING_MODE_BITS = {
+                        1: "heat",
+                        2: "heat+tank",
+                        4: "tank",
+                        8: "cool+tank",
+                        16: "cool",
+                        32: "auto",
+                        64: "auto+tank"
+                      }
 
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
@@ -122,21 +133,7 @@ INTESIS_MAP = {
     },
     68: {"name": "instant_power_consumption"},
     69: {"name": "accumulated_power_consumption"},
-    75: {
-        "name": "config_operating_mode",
-        "values": {
-            49: {1: "heat", 5: "cool", 6: "auto"},
-            127: {
-                1: "heat",
-                2: "heat+tank",
-                3: "tank",
-                4: "cool+tank",
-                5: "cool",
-                6: "auto",
-                7: "auto+tank",
-            },
-        },
-    },
+    75: {"name": "config_operating_mode"},
     77: {"name": "config_vanes_pulse"},
     80: {"name": "aquarea_tank_consumption"},
     81: {"name": "aquarea_cool_consumption"},
@@ -294,6 +291,7 @@ class IntesisHome:
         self._connecting = False
         self._sendQueue = asyncio.Queue()
         self._sendQueueTask = None
+        self._keepaliveTask = None
         self._updateCallbacks = []
         self._errorMessage = None
         self._webSession = websession
@@ -301,6 +299,7 @@ class IntesisHome:
         self._reader = None
         self._writer = None
         self._reconnectionAttempt = 0
+        self._last_message_received = 0
 
         if loop:
             _LOGGER.debug("Using the provided event loop")
@@ -314,53 +313,69 @@ class IntesisHome:
             self._webSession = aiohttp.ClientSession()
             self._ownSession = True
 
+    async def parse_api_messages(self, message):
+        _LOGGER.debug(f"{self._device_type} API Received: {message}")
+        self._last_message_received = datetime.now()
+        resp = json.loads(message)
+        # Parse response
+        if resp["command"] == "connect_rsp":
+            # New connection success
+            if resp["data"]["status"] == "ok":
+                _LOGGER.info(f"{self._device_type} succesfully authenticated")
+                self._connected = True
+                self._connecting = False
+                self._connectionRetires = 0
+                await self._send_update_callback()
+        elif resp["command"] == "status":
+            # Value has changed
+            self._update_device_state(
+                resp["data"]["deviceId"],
+                resp["data"]["uid"],
+                resp["data"]["value"],
+            )
+            self._update_rssi(resp["data"]["deviceId"], resp["data"]["rssi"])
+            if resp["data"]["uid"] != 60002:
+                await self._send_update_callback(
+                    deviceId=str(resp["data"]["deviceId"])
+                )
+        elif resp["command"] == "rssi":
+            # Wireless strength has changed
+            self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
+        return
+
+    async def _send_keepalive(self):
+        if self._connected:
+            _LOGGER.debug("sending keepalive")
+            message = (
+                '{"command":"get"}'
+            )
+            self._sendQueue.put_nowait(message)
+            
+    
     async def _handle_packets(self):
-        while True:
+        data = True
+        while data:
             try:
                 data = await self._reader.readuntil(b"}}")
                 if not data:
                     break
-
                 message = data.decode("ascii")
-                _LOGGER.debug(f"{self._device_type} API Received: {message}")
-                resp = json.loads(message)
-                # Parse response
-                if resp["command"] == "connect_rsp":
-                    # New connection success
-                    if resp["data"]["status"] == "ok":
-                        _LOGGER.info(f"{self._device_type} succesfully authenticated")
-                        self._connected = True
-                        self._connecting = False
-                        self._connectionRetires = 0
-                        await self._send_update_callback()
-                elif resp["command"] == "status":
-                    # Value has changed
-                    self._update_device_state(
-                        resp["data"]["deviceId"],
-                        resp["data"]["uid"],
-                        resp["data"]["value"],
-                    )
-                    self._update_rssi(resp["data"]["deviceId"], resp["data"]["rssi"])
-                    if resp["data"]["uid"] != 60002:
-                        await self._send_update_callback(
-                            deviceId=str(resp["data"]["deviceId"])
-                        )
-                elif resp["command"] == "rssi":
-                    # Wireless strength has changed
-                    self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
-            except asyncio.IncompleteReadError:
-                _LOGGER.error(
-                    f"pyIntesisHome lost connection to the {self._device_type} server."
-                )
+                await self.parse_api_messages(message)
 
-                self._connected = False
-                self._connecting = False
-                self._authToken = None
-                self._reader._transport.close()
-                self._writer._transport.close()
-                self._sendQueueTask.cancel()
-                await self._send_update_callback()
-                return
+            except (asyncio.IncompleteReadError, TimeoutError, ConnectionResetError, OSError) as e:
+                _LOGGER.error(
+                    "pyIntesisHome lost connection to the %s server. Exception: %s", self._device_type, e
+                )
+                break
+
+        self._connected = False
+        self._connecting = False
+        self._authToken = None
+        self._reader = None
+        self._writer = None
+        self._sendQueueTask.cancel()
+        await self._send_update_callback()
+        return
 
     async def _send_queue(self):
         while self._connected or self._connecting:
@@ -386,21 +401,30 @@ class IntesisHome:
                         "Couldn't get API details, retrying in %i minutes", self._connectionRetires
                     )
                     await asyncio.sleep(self._connectionRetires * 60)
-                self._authToken = await self.poll_status()
+                try:
+                    self._authToken = await self.poll_status()
+                except IHConnectionError as ex:
+                    _LOGGER.error("Error connecting to the %s server: %s", self._device_type, ex)
                 self._connectionRetires += 1
 
-            _LOGGER.debug(
-                "Opening connection to %s API at %s:%i",
-                self._device_type,
-                self._cmdServer,
-                self._cmdServerPort,
-            )
+                _LOGGER.debug(
+                    "Opening connection to %s API at %s:%i",
+                    self._device_type,
+                    self._cmdServer,
+                    self._cmdServerPort,
+                )
 
             try:
                 # Create asyncio socket
                 self._reader, self._writer = await asyncio.open_connection(
                     self._cmdServer, self._cmdServerPort
                 )
+
+                # Set socket timeout
+                if self._reader._transport._sock:
+                    self._reader._transport._sock.settimeout(60)
+                    self._reader._transport._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 60*1000)
+                    self._reader._transport._sock.setsockopt(socket.IPPROTO_TCP, socket.SO_KEEPALIVE, 60*1000)
 
                 # Authenticate
                 authMsg = '{"command":"connect_req","data":{"token":%s}}' % (
@@ -411,22 +435,27 @@ class IntesisHome:
                 self._writer.write(authMsg.encode("ascii"))
                 await self._writer.drain()
                 _LOGGER.debug("Data sent: %s", authMsg)
+                _LOGGER.debug("Socket timeout is %s", self._reader._transport._sock.gettimeout())
 
                 self._eventLoop.create_task(self._handle_packets())
+                #self._keepaliveTask = self._eventLoop.create_task(self._send_keepalive())
                 self._sendQueueTask = self._eventLoop.create_task(self._send_queue())
-            except Exception as e:
-                _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
+
+            except (ConnectionRefusedError, Exception) as e:
+                _LOGGER.error(
+                    "Connection to %s:%s failed with exception %s",
+                    self._cmdServer, self._cmdServerPort, e)
                 self._connected = False
                 self._connecting = False
-                self._sendQueueTask.cancel()
+                await self._send_update_callback()
 
     async def stop(self):
         """Public method for shutting down connectivity with the envisalink."""
         self._connected = False
-        if self._writer._transport:
+        if self._writer:
             self._writer._transport.close()
 
-        if self._reader._transport:
+        if self._reader:
             self._reader._transport.close()
 
         if self._ownSession:
@@ -459,7 +488,7 @@ class IntesisHome:
             ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)
-        except (aiohttp.client_exceptions.ClientError) as e:
+        except (aiohttp.client_exceptions.ClientError, socket.gaierror) as e:
             self._errorMessage = f"Error connecting to {self._device_type} API: {e}"
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
             raise IHConnectionError
@@ -642,10 +671,21 @@ class IntesisHome:
     def get_mode_list(self, deviceId) -> list:
         """Public method to return the list of device modes."""
         mode_list = list()
-        config_mode_map = self._devices[str(deviceId)].get("config_mode_map")
-        for mode_bit in MODE_BITS.keys():
-            if config_mode_map & mode_bit:
-                mode_list.append(MODE_BITS.get(mode_bit))
+
+        # By default, use config_mode_map to determine the available modes
+        mode_map = self._devices[str(deviceId)].get("config_mode_map")
+        mode_bits = CONFIG_MODE_BITS
+
+        if "config_operating_mode" in self._devices[str(deviceId)]:
+            # If config_operating_mode is supplied, use that
+            mode_map = self._devices[str(deviceId)].get("config_operating_mode")
+            mode_bits = OPERATING_MODE_BITS
+        
+        # Generate the mode list from the map
+        for mode_bit in mode_bits.keys():
+            if mode_map & mode_bit:
+                mode_list.append(mode_bits.get(mode_bit))
+
         return mode_list
 
     def get_fan_speed(self, deviceId):
