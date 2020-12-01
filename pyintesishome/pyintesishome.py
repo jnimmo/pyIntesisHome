@@ -454,7 +454,7 @@ class IntesisHome:
                 _LOGGER.error(f"Exception: {repr(e)}")
                 return
 
-    async def connect(self):
+    async def connect(self, *args):
         """Public method for connecting to IntesisHome/Airconwithme API"""
         if not self._connected and not self._connecting:
             self._connecting = True
