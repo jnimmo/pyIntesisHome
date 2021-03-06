@@ -91,6 +91,7 @@ INTESIS_MAP = {
     46: {"name": "solar_status"},
     48: {"name": "thermoshift_heat_eco"},
     49: {"name": "thermoshift_cool_eco"},
+    50: {"name": "thermoshift_heat_powerful"},
     51: {"name": "thermoshift_cool_powerful"},
     52: {"name": "thermoshift_tank_eco"},
     53: {"name": "thermoshift_tank_powerful"},
@@ -250,7 +251,72 @@ COMMAND_MAP = {
             "manual5": 5,
         },
     },
-    "setpoint": {"uid": 9},
+    "setpoint": {"uid": 9}
+     # aquarea
+    ,"quiet": {"uid": 34, "values": {"off": 0, "on": 1}}
+    ,"tank": {"uid": 44, "values": {"comfort": 0, "eco": 1, "powerful": 2}}
+    ,"reset_eror": {"uid": 54, "values": {"on": 1}}
+    ,"tank_setpoint_temperature": {"uid": 57}
+    ,"thermoshift_heat_eco": {"uid": 48, "min": 0, "max": 5}
+    ,"thermoshift_cool_eco": {"uid": 49, "min": 0, "max": 5} # 172
+    ,"thermoshift_heat_powerful": {"uid": 50, "min": 0, "max": 5}
+    ,"thermoshift_cool_powerful": {"uid": 51, "min": 0, "max": 5} # 171
+    ,"thermoshift_tank_eco": {"uid": 52, "min": 0, "max": 10}
+    ,"thermoshift_tank_powerful": {"uid": 53, "min": 0, "max": 10}
+    ,"heat_thermo_shift": {"uid": 55, "min": -5, "max": 5}
+    ,"cool_water_setpoint_temperature": {"uid": 56}
+    ,"heat_high_water_set_temperature": {"uid": 83, "min": 25, "max": 55}
+    ,"heat_low_outdoor_set_temperature": {"uid": 134, "min": -15, "max": 15}
+    ,"heat_high_outdoor_set_temperature": {"uid": 135, "min": -15, "max": 15}
+    ,"heat_low_water_set_temperature": {"uid": 136, "min": 25, "max": 55}
+    ,"resync": {"uid": 143, "values": {"on": 1}}
+    ,"remote_control_block": {"uid": 12, "values": {"on": 2, "off": 0}}
+}
+
+# aquarea
+ERROR_MAP = {
+      0 : { 'code': 'H00', 'desc': 'No abnormality detected'},
+      2 : { 'code': 'H91', 'desc': 'Tank booster heater OLP abnormality'},
+     13 : { 'code': 'F38', 'desc': 'Unknown'},
+     20 : { 'code': 'H90', 'desc': 'Indoor / outdoor abnormal communication'},
+     36 : { 'code': 'H99', 'desc': 'Indoor heat exchanger freeze prevention'},
+     38 : { 'code': 'H72', 'desc': 'Tank temperature sensor abnormality'},
+     42 : { 'code': 'H12', 'desc': 'Indoor / outdoor capacity unmatched'},
+    156 : { 'code': 'H76', 'desc': 'Indoor - control panel communication abnormality'},
+    193 : { 'code': 'F12', 'desc': 'Pressure switch activate'},
+    195 : { 'code': 'F14', 'desc': 'Outdoor compressor abnormal rotation'},
+    196 : { 'code': 'F15', 'desc': 'Outdoor fan motor lock abnormality'},
+    197 : { 'code': 'F16', 'desc': 'Total running current protection'},
+    200 : { 'code': 'F20', 'desc': 'Outdoor compressor overheating protection'},
+    202 : { 'code': 'F22', 'desc': 'IPM overheating protection'},
+    203 : { 'code': 'F23', 'desc': 'Outdoor DC peak detection'},
+    204 : { 'code': 'F24', 'desc': 'Refrigerant cycle abnormality'},
+    205 : { 'code': 'F27', 'desc': 'Pressure switch abnormality'},
+    207 : { 'code': 'F46', 'desc': 'Outdoor current transformer open circuit'},
+    208 : { 'code': 'F36', 'desc': 'Outdoor air temperature sensor abnormality'},
+    209 : { 'code': 'F37', 'desc': 'Indoor water inlet temperature sensor abnormality'},
+    210 : { 'code': 'F45', 'desc': 'Indoor water outlet temperature sensor abnormality'},
+    212 : { 'code': 'F40', 'desc': 'Outdoor discharge pipe temperature sensor abnormality'},
+    214 : { 'code': 'F41', 'desc': 'PFC control'},
+    215 : { 'code': 'F42', 'desc': 'Outdoor heat exchanger temperature sensor abnormality'},
+    216 : { 'code': 'F43', 'desc': 'Outdoor defrost temperature sensor abnormality'},
+    222 : { 'code': 'H95', 'desc': 'Indoor / outdoor wrong connection'},
+    224 : { 'code': 'H15', 'desc': 'Outdoor compressor temperature sensor abnormality'},
+    225 : { 'code': 'H23', 'desc': 'Indoor refrigerant liquid temperature sensor abnormality'},
+    226 : { 'code': 'H24', 'desc': 'Unknown'},
+    227 : { 'code': 'H38', 'desc': 'Indoor / outdoor mismatch'},
+    228 : { 'code': 'H61', 'desc': 'Unknown'},
+    229 : { 'code': 'H62', 'desc': 'Water flow switch abnormality'},
+    230 : { 'code': 'H63', 'desc': 'Refrigerant low pressure abnormality'},
+    231 : { 'code': 'H64', 'desc': 'Refrigerant high pressure abnormality'},
+    232 : { 'code': 'H42', 'desc': 'Compressor low pressure abnormality'},
+    233 : { 'code': 'H98', 'desc': 'Outdoor high pressure overload protection'},
+    234 : { 'code': 'F25', 'desc': 'Cooling / heating cycle changeover abnormality'},
+    235 : { 'code': 'F95', 'desc': 'Cooling high pressure overload protection'},
+    236 : { 'code': 'H70', 'desc': 'Indoor backup heater OLP abnormality'},
+    237 : { 'code': 'F48', 'desc': 'Outdoor EVA outlet temperature sensor abnormality'},
+    238 : { 'code': 'F49', 'desc': 'Outdoor bypass outlet temperature sensor abnormality'},
+  65535 : { 'code': 'N/A', 'desc': 'Communication error between PA-IntesisHome'}
 }
 
 API_URL = {
@@ -492,11 +558,11 @@ class IntesisHome:
             ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)
+        except (aiohttp.client_exceptions.ClientConnectorError) as e:
+            raise IHConnectionError
         except (aiohttp.client_exceptions.ClientError, socket.gaierror) as e:
             self._errorMessage = f"Error connecting to {self._device_type} API: {e}"
             _LOGGER.error(f"{type(e)} Exception. {repr(e.args)} / {e}")
-            raise IHConnectionError
-        except (aiohttp.client_exceptions.ClientConnectorError) as e:
             raise IHConnectionError
 
         if status_response:
@@ -547,6 +613,10 @@ class IntesisHome:
 
         return self._authToken
 
+    def _get_uint32(self, value):
+        result = int(value) & 0xffff
+        return result
+
     def get_run_hours(self, deviceId) -> str:
         """Public method returns the run hours of the IntesisHome controller."""
         run_hours = self._devices[str(deviceId)].get("working_hours")
@@ -576,7 +646,7 @@ class IntesisHome:
 
     async def set_temperature(self, deviceId, setpoint):
         """Public method for setting the temperature"""
-        set_temp = int(setpoint * 10)
+        set_temp = self._get_uint32((setpoint * 10))
         await self._set_value(deviceId, COMMAND_MAP["setpoint"]["uid"], set_temp)
 
     async def set_fan_speed(self, deviceId, fan: str):
@@ -830,7 +900,49 @@ class IntesisHome:
         """Internal method to compute Two's Complement, to represent negative temperatures"""
         if (val & (1 << 15)) != 0:
             val = val - (1 << 16)
-        return val      
+        return val   
+   
+    def get_error(self, deviceId) -> str:
+        """Public method returns the current error code + description."""
+        error_code = self._devices[str(deviceId)].get('error_code')
+        remote_code = ERROR_MAP[error_code]['code']
+        error_desc = ERROR_MAP[error_code]['desc']
+        return (("%s: %s" % (remote_code, error_desc)))
+
+    def _get_gen_value(self, deviceId, name) -> str:
+        """ Internal method for getting generic value """
+        value = None
+        if name in self._devices[str(deviceId)]:
+            value = self._devices[str(deviceId)].get(name)
+            _LOGGER.debug(f"{name} = {value}")
+        else:
+            _LOGGER.debug(f"No value for {deviceId} {name}")
+        return value
+
+    def _get_gen_num_value(self, deviceId, name):
+        """ Internal method for getting generic value and dividing by 10 if numeric """
+        value = self._get_gen_value(deviceId, name)
+        if (isinstance(value, int) or isinstance(value, float)):
+            temperature = float(value / 10)
+            return temperature
+        else:
+            return value
+
+    def _set_gen_mode(self, deviceId, type, mode):
+        """Internal method for setting the generic mode (type in {operating_mode, climate_working_mode, tank, etc.}) with a string value"""
+        if mode in COMMAND_MAP[type]['values']:
+            self._set_value( deviceId, COMMAND_MAP[type]['uid'], COMMAND_MAP[type]['values'][mode])
+
+    def _set_thermo_shift(self, deviceId, name, value):
+        """Public method to set thermo shift temperature."""
+        min_shift = int(COMMAND_MAP[name]['min'])
+        max_shift = int(COMMAND_MAP[name]['max'])
+
+        if (min_shift <= value <= max_shift):
+            unsigned_value = self._get_uint32((value*10)) # unsigned int 16 bit
+            self._set_value(deviceId, COMMAND_MAP[name]['uid'], unsigned_value)
+        else:
+            raise ValueError("Value for %s has to be in range [%d,%d]" % name, min_shift, max_shift)
 
     @property
     def is_connected(self) -> bool:
