@@ -129,6 +129,8 @@ INTESIS_MAP = {
             31: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high"},
             62: {1: "quiet", 2: "low", 3: "medium", 4: "high", 5: "max"},
             63: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high", 5: "max"},
+            126: {1: "speed 1", 2: "speed 2", 3: "speed 3", 4: "speed 4", 5: "speed 5", 6: "speed 6"},
+            127: {0: "auto", 1: "speed 1", 2: "speed 2", 3: "speed 3", 4: "speed 4", 5: "speed 5", 6: "speed 6"},
         },
     },
     68: {"name": "instant_power_consumption"},
@@ -333,7 +335,6 @@ class IntesisHome:
                 resp["data"]["uid"],
                 resp["data"]["value"],
             )
-            self._update_rssi(resp["data"]["deviceId"], resp["data"]["rssi"])
             if resp["data"]["uid"] != 60002:
                 await self._send_update_callback(
                     deviceId=str(resp["data"]["deviceId"])
@@ -423,8 +424,11 @@ class IntesisHome:
                 # Set socket timeout
                 if self._reader._transport._sock:
                     self._reader._transport._sock.settimeout(60)
-                    self._reader._transport._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 60*1000)
-                    self._reader._transport._sock.setsockopt(socket.IPPROTO_TCP, socket.SO_KEEPALIVE, 60*1000)
+                    try:
+                        self._reader._transport._sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 60*1000)
+                        self._reader._transport._sock.setsockopt(socket.IPPROTO_TCP, socket.SO_KEEPALIVE, 60*1000)
+                    except:
+                        _LOGGER.debug("Exception seting TCP_USER_TIMEOUT or SO_KEEPALIVE, you can probably ignore this")
 
                 # Authenticate
                 authMsg = '{"command":"connect_req","data":{"token":%s}}' % (
@@ -626,7 +630,7 @@ class IntesisHome:
 
     def _update_rssi(self, deviceId, rssi):
         """Internal method to update the wireless signal strength."""
-        if rssi:
+        if rssi and str(deviceId) in self._devices:
             self._devices[str(deviceId)]["rssi"] = rssi
 
     async def set_mode_heat(self, deviceId):
@@ -692,7 +696,7 @@ class IntesisHome:
         """Public method returns the current fan speed."""
         config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
 
-        if "fan_speed" in self._devices[str(deviceId)] and config_fan_map:
+        if "fan_speed" in self._devices[str(deviceId)] and isinstance(config_fan_map, dict):
             fan_speed_int = self._devices[str(deviceId)].get("fan_speed")
             return config_fan_map.get(fan_speed_int)
         else:
@@ -701,7 +705,7 @@ class IntesisHome:
     def get_fan_speed_list(self, deviceId):
         """Public method to return the list of possible fan speeds."""
         config_fan_map = self._devices[str(deviceId)].get("config_fan_map")
-        if config_fan_map:
+        if isinstance(config_fan_map, dict):
             return list(config_fan_map.values())
         else:
             return None
@@ -774,14 +778,14 @@ class IntesisHome:
         """Public method returns the current temperature."""
         temperature = self._devices[str(deviceId)].get("temperature")
         if temperature:
-            temperature = int(temperature) / 10
+            temperature = self.twos_complement_16bit(int(temperature)) / 10
         return temperature
 
     def get_outdoor_temperature(self, deviceId) -> float:
         """Public method returns the current temperature."""
         outdoor_temp = self._devices[str(deviceId)].get("outdoor_temp")
         if outdoor_temp:
-            outdoor_temp = int(outdoor_temp) / 10
+            outdoor_temp = self.twos_complement_16bit(int(outdoor_temp)) / 10
         return outdoor_temp
 
     def get_max_setpoint(self, deviceId) -> float:
@@ -820,6 +824,13 @@ class IntesisHome:
                 await callback(device_id=deviceId)
         else:
             _LOGGER.debug("Update callback has not been set by client")
+
+    @staticmethod 
+    def twos_complement_16bit(val):
+        """Internal method to compute Two's Complement, to represent negative temperatures"""
+        if (val & (1 << 15)) != 0:
+            val = val - (1 << 16)
+        return val      
 
     @property
     def is_connected(self) -> bool:
