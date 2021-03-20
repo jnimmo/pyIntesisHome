@@ -15,6 +15,7 @@ INTESIS_NULL = 32768
 
 DEVICE_INTESISHOME = "IntesisHome"
 DEVICE_AIRCONWITHME = "airconwithme"
+DEVICE_ANYWAIR = "anywair"
 
 API_DISCONNECTED = "Disconnected"
 API_CONNECTING = "Connecting"
@@ -321,10 +322,15 @@ ERROR_MAP = {
 
 API_URL = {
     DEVICE_AIRCONWITHME: "https://user.airconwithme.com/api.php/get/control",
+    DEVICE_ANYWAIR: "https://anywair.intesishome.com/api.php/get/control",
     DEVICE_INTESISHOME: "https://user.intesishome.com/api.php/get/control",
 }
 
-API_VER = {DEVICE_AIRCONWITHME: "1.6.2", DEVICE_INTESISHOME: "1.8.5"}
+API_VER = {
+    DEVICE_AIRCONWITHME: "1.6.2",
+    DEVICE_ANYWAIR: "2.9",
+    DEVICE_INTESISHOME: "1.2.2"
+}
 
 
 class IHConnectionError(Exception):
