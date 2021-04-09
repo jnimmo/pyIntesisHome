@@ -9,6 +9,7 @@ setup(name='pyintesishome',
       author='James Nimmo',
       author_email='james@nimmo.net.nz',
       license='MIT',
+      install_requires=["aiohttp>=3.7.4,<4"],
       packages=['pyintesishome'],
       classifiers=['Development Status :: 3 - Alpha', 'Programming Language :: Python :: 3.4','Programming Language :: Python :: 3.5','Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator']
 )
