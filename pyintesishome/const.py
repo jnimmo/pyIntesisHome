@@ -28,7 +28,22 @@ INTESIS_MAP = {
         "name": "mode",
         "values": {0: "auto", 1: "heat", 2: "dry", 3: "fan", 4: "cool"},
     },
-    4: {"name": "fan_speed"},
+    4: {
+        "name": "fan_speed",
+        "values": {
+            0: "Auto",
+            1: "Speed 1",
+            2: "Speed 2",
+            3: "Speed 3",
+            4: "Speed 4",
+            5: "Speed 5",
+            6: "Speed 6",
+            7: "Speed 7",
+            8: "Speed 8",
+            9: "Speed 9",
+            10: "Speed 10",
+        },
+    },
     5: {
         "name": "vvane",
         "values": {

@@ -115,8 +115,8 @@ class IntesisHomeBase:
 
     async def set_fan_speed(self, deviceId, fan: str):
         """Public method to set the fan speed"""
-        config_fan_map = self._get_value(deviceId, "config_fan_map")
-        map_fan_speed_to_int = {v: k for k, v in config_fan_map.items()}
+        fan_map = self._get_fan_map(deviceId)
+        map_fan_speed_to_int = {v: k for k, v in fan_map.items()}
         await self._set_value(
             deviceId, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
         )
@@ -228,21 +228,19 @@ class IntesisHomeBase:
 
     def get_fan_speed(self, deviceId):
         """Public method returns the current fan speed."""
-        config_fan_map = self._get_value(deviceId, "config_fan_map")
+        fan_map = self._get_fan_map(deviceId)
 
-        if "fan_speed" in self._devices[str(deviceId)] and isinstance(
-            config_fan_map, dict
-        ):
-            fan_speed_int = self._get_value(deviceId, "fan_speed")
-            return config_fan_map.get(fan_speed_int)
+        if "fan_speed" in self._devices[str(deviceId)] and isinstance(fan_map, dict):
+            fan_speed = self._get_value(deviceId, "fan_speed")
+            return fan_map.get(fan_speed, fan_speed)
         else:
             return None
 
     def get_fan_speed_list(self, deviceId):
         """Public method to return the list of possible fan speeds."""
-        config_fan_map = self._get_value(deviceId, "config_fan_map")
-        if isinstance(config_fan_map, dict):
-            return list(config_fan_map.values())
+        fan_map = self._get_fan_map(deviceId)
+        if isinstance(fan_map, dict):
+            return list(fan_map.values())
         else:
             return None
 
@@ -439,6 +437,10 @@ class IntesisHomeBase:
     async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._updateCallbacks.append(method)
+
+    def _get_fan_map(self, deviceId):
+        """Private method to get the fan_map."""
+        raise NotImplementedError()
 
 
 class IntesisHome(IntesisHomeBase):
@@ -711,6 +713,9 @@ class IntesisHome(IntesisHomeBase):
         )
         self._sendQueue.put_nowait(message)
 
+    def _get_fan_map(self, deviceId):
+        return self._get_value(deviceId, "config_fan_map")
+
 
 class IntesisHomeLocal(IntesisHomeBase):
     def __init__(
@@ -861,6 +866,13 @@ class IntesisHomeLocal(IntesisHomeBase):
             INTESIS_MAP[uid]["values"][i]
             for i in self._datapoints[uid]["descr"]["states"]
         ]
+
+    def _get_fan_map(self, deviceId):
+        uid = COMMAND_MAP["fan_speed"]["uid"]
+        return {
+            i: INTESIS_MAP[uid]["values"][i]
+            for i in self._datapoints[uid]["descr"]["states"]
+        }
 
 
 async def main(loop):
