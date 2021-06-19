@@ -874,6 +874,14 @@ class IntesisHomeLocal(IntesisHomeBase):
             for i in self._datapoints[uid]["descr"]["states"]
         }
 
+    def has_vertical_swing(self, deviceId) -> bool:
+        """Entity supports vertical swing."""
+        return self._has_datapoint("vvane")
+
+    def has_horizontal_swing(self, deviceId) -> bool:
+        """Entity supports horizontal swing."""
+        return self._has_datapoint("hvane")
+
 
 async def main(loop):
     logging.basicConfig(level=logging.DEBUG)
