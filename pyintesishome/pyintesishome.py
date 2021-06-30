@@ -15,6 +15,8 @@ from .const import (
     API_VER,
     COMMAND_MAP,
     CONFIG_MODE_BITS,
+    DEVICE_AIRCONWITHME,
+    DEVICE_ANYWAIR,
     DEVICE_INTESISHOME,
     DEVICE_INTESISHOME_LOCAL,
     ERROR_MAP,
@@ -922,7 +924,12 @@ async def main(loop):
         type=str,
         dest="device",
         help="Select API to connect to",
-        choices=["intesishome", "airconwithme", "anywair", "intesishome_local"],
+        choices=[
+            DEVICE_INTESISHOME,
+            DEVICE_AIRCONWITHME,
+            DEVICE_ANYWAIR,
+            DEVICE_INTESISHOME_LOCAL,
+        ],
         default=DEVICE_INTESISHOME,
     )
     parser.add_argument(
