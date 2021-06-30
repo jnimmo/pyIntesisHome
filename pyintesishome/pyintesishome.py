@@ -2,23 +2,34 @@ import argparse
 import asyncio
 import json
 import logging
-import sys
 import socket
-import aiohttp
-
+import sys
 from datetime import datetime
+
+import aiohttp
 
 _LOGGER = logging.getLogger("pyintesishome")
 
-from .const import *
-
-
-class IHConnectionError(Exception):
-    pass
-
-
-class IHAuthenticationError(ConnectionError):
-    pass
+from .const import (
+    API_URL,
+    API_VER,
+    COMMAND_MAP,
+    CONFIG_MODE_BITS,
+    DEVICE_INTESISHOME,
+    DEVICE_INTESISHOME_LOCAL,
+    ERROR_MAP,
+    INTESIS_CMD_STATUS,
+    INTESIS_MAP,
+    INTESIS_NULL,
+    LOCAL_CMD_GET_AVAIL_DP,
+    LOCAL_CMD_GET_DP_VALUE,
+    LOCAL_CMD_GET_INFO,
+    LOCAL_CMD_LOGIN,
+    LOCAL_CMD_SET_DP_VALUE,
+    OPERATING_MODE_BITS,
+)
+from .exceptions import IHAuthenticationError, IHConnectionError
+from .helpers import twos_complement_16bit, uint32
 
 
 class IntesisHomeBase:
@@ -37,6 +48,7 @@ class IntesisHomeBase:
         self._devices = {}
         self._connected = False
         self._connecting = False
+        self._connectionRetires = 0
         self._updateCallbacks = []
         self._errorMessage = None
         self._webSession = websession
@@ -53,85 +65,6 @@ class IntesisHomeBase:
             _LOGGER.debug("Creating new websession")
             self._webSession = aiohttp.ClientSession()
             self._ownSession = True
-
-    async def connect(self):
-        """Public method for connecting to API"""
-        raise NotImplementedError()
-
-    async def stop(self):
-        """Public method for shutting down connectivity."""
-        raise NotImplementedError()
-
-    def get_devices(self):
-        """Public method to return the state of all IntesisHome devices"""
-        return self._devices
-
-    def get_device(self, deviceId):
-        """Public method to return the state of the specified device"""
-        return self._devices.get(str(deviceId))
-
-    def get_device_property(self, deviceId, property_name):
-        return self._devices[str(deviceId)].get(property_name)
-
-    async def poll_status(self, sendcallback=False):
-        """Public method to query IntesisHome for state of device. Notifies subscribers if sendCallback True."""
-        raise NotImplementedError()
-
-    def _get_uint32(self, value):
-        result = int(value) & 0xFFFF
-        return result
-
-    def get_run_hours(self, deviceId) -> str:
-        """Public method returns the run hours of the IntesisHome controller."""
-        run_hours = self._get_value(deviceId, "working_hours")
-        return run_hours
-
-    async def set_mode(self, deviceId, mode: str):
-        """Internal method for setting the mode with a string value."""
-        mode_control = "mode"
-        if "mode" not in self._devices[str(deviceId)]:
-            mode_control = "operating_mode"
-
-        if mode in COMMAND_MAP[mode_control]["values"]:
-            await self._set_value(
-                deviceId,
-                COMMAND_MAP[mode_control]["uid"],
-                COMMAND_MAP[mode_control]["values"][mode],
-            )
-
-    async def set_preset_mode(self, deviceId, preset: str):
-        """Internal method for setting the mode with a string value."""
-        if preset in COMMAND_MAP["climate_working_mode"]["values"]:
-            await self._set_value(
-                deviceId,
-                COMMAND_MAP["climate_working_mode"]["uid"],
-                COMMAND_MAP["climate_working_mode"]["values"][preset],
-            )
-
-    async def set_temperature(self, deviceId, setpoint):
-        """Public method for setting the temperature"""
-        set_temp = self._get_uint32((setpoint * 10))
-        await self._set_value(deviceId, COMMAND_MAP["setpoint"]["uid"], set_temp)
-
-    async def set_fan_speed(self, deviceId, fan: str):
-        """Public method to set the fan speed"""
-        fan_map = self._get_fan_map(deviceId)
-        map_fan_speed_to_int = {v: k for k, v in fan_map.items()}
-        await self._set_value(
-            deviceId, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
-        )
-
-    async def set_vertical_vane(self, deviceId, vane: str):
-        """Public method to set the vertical vane"""
-        await self._set_value(
-            deviceId, COMMAND_MAP["vvane"]["uid"], COMMAND_MAP["vvane"]["values"][vane]
-        )
-
-    async def set_horizontal_vane(self, deviceId, vane: str):
-        """Public method to set the horizontal vane"""
-        await self._set_value(
-            deviceId, COMMAND_MAP["hvane"]["uid"], COMMAND_MAP["hvane"]["values"][vane]
-        )
 
     async def _set_value(self, deviceId, uid, value):
         """Internal method to send a command to the API (and connect if necessary)"""
@@ -166,6 +99,82 @@ class IntesisHomeBase:
         """Internal method to update the wireless signal strength."""
         if rssi and str(deviceId) in self._devices:
             self._devices[str(deviceId)]["rssi"] = rssi
+
+    async def connect(self):
+        """Public method for connecting to API"""
+        raise NotImplementedError()
+
+    async def stop(self):
+        """Public method for shutting down connectivity."""
+        raise NotImplementedError()
+
+    async def poll_status(self, sendcallback=False):
+        """Public method to query IntesisHome for state of device. Notifies subscribers if sendCallback True."""
+        raise NotImplementedError()
+
+    def get_devices(self):
+        """Public method to return the state of all IntesisHome devices"""
+        return self._devices
+
+    def get_device(self, deviceId):
+        """Public method to return the state of the specified device"""
+        return self._devices.get(str(deviceId))
+
+    def get_device_property(self, deviceId, property_name):
+        """Public method to get a property of the specified device"""
+        return self._devices[str(deviceId)].get(property_name)
+
+    def get_run_hours(self, deviceId) -> str:
+        """Public method returns the run hours of the IntesisHome controller."""
+        run_hours = self._get_value(deviceId, "working_hours")
+        return run_hours
+
+    async def set_mode(self, deviceId, mode: str):
+        """Internal method for setting the mode with a string value."""
+        mode_control = "mode"
+        if "mode" not in self._devices[str(deviceId)]:
+            mode_control = "operating_mode"
+
+        if mode in COMMAND_MAP[mode_control]["values"]:
+            await self._set_value(
+                deviceId,
+                COMMAND_MAP[mode_control]["uid"],
+                COMMAND_MAP[mode_control]["values"][mode],
+            )
+
+    async def set_preset_mode(self, deviceId, preset: str):
+        """Internal method for setting the mode with a string value."""
+        if preset in COMMAND_MAP["climate_working_mode"]["values"]:
+            await self._set_value(
+                deviceId,
+                COMMAND_MAP["climate_working_mode"]["uid"],
+                COMMAND_MAP["climate_working_mode"]["values"][preset],
+            )
+
+    async def set_temperature(self, deviceId, setpoint):
+        """Public method for setting the temperature"""
+        set_temp = uint32(setpoint * 10)
+        await self._set_value(deviceId, COMMAND_MAP["setpoint"]["uid"], set_temp)
+
+    async def set_fan_speed(self, deviceId, fan: str):
+        """Public method to set the fan speed"""
+        fan_map = self._get_fan_map(deviceId)
+        map_fan_speed_to_int = {v: k for k, v in fan_map.items()}
+        await self._set_value(
+            deviceId, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
+        )
+
+    async def set_vertical_vane(self, deviceId, vane: str):
+        """Public method to set the vertical vane"""
+        await self._set_value(
+            deviceId, COMMAND_MAP["vvane"]["uid"], COMMAND_MAP["vvane"]["values"][vane]
+        )
+
+    async def set_horizontal_vane(self, deviceId, vane: str):
+        """Public method to set the horizontal vane"""
+        await self._set_value(
+            deviceId, COMMAND_MAP["hvane"]["uid"], COMMAND_MAP["hvane"]["values"][vane]
+        )
 
     async def set_mode_heat(self, deviceId):
         """Public method to set device to heat asynchronously."""
@@ -245,6 +254,7 @@ class IntesisHomeBase:
             return None
 
     def get_device_name(self, deviceId) -> str:
+        """Public method to get the name of a device."""
         return self._get_value(deviceId, "name")
 
     def get_power_state(self, deviceId) -> str:
@@ -282,6 +292,7 @@ class IntesisHomeBase:
             return int(aquarea_tank)
 
     def get_preset_mode(self, deviceId) -> str:
+        """Public method to get the current set preset mode."""
         return self._get_value(deviceId, "climate_working_mode")
 
     def is_on(self, deviceId) -> bool:
@@ -289,14 +300,17 @@ class IntesisHomeBase:
         return self._get_value(deviceId, "power") == "on"
 
     def has_vertical_swing(self, deviceId) -> bool:
+        """Public method to check if the device has vertical swing."""
         vvane_config = self._get_value(deviceId, "config_vertical_vanes")
         return vvane_config and vvane_config > 1024
 
     def has_horizontal_swing(self, deviceId) -> bool:
+        """Public method to check if the device has horizontal swing."""
         hvane_config = self._get_value(deviceId, "config_horizontal_vanes")
         return hvane_config and hvane_config > 1024
 
     def has_setpoint_control(self, deviceId) -> bool:
+        """Public method to check if the device has setpoint control."""
         return "setpoint" in self._devices[str(deviceId)]
 
     def get_setpoint(self, deviceId) -> float:
@@ -310,14 +324,14 @@ class IntesisHomeBase:
         """Public method returns the current temperature."""
         temperature = self._get_value(deviceId, "temperature")
         if temperature:
-            temperature = self.twos_complement_16bit(int(temperature)) / 10
+            temperature = twos_complement_16bit(int(temperature)) / 10
         return temperature
 
     def get_outdoor_temperature(self, deviceId) -> float:
         """Public method returns the current temperature."""
         outdoor_temp = self._get_value(deviceId, "outdoor_temp")
         if outdoor_temp:
-            outdoor_temp = self.twos_complement_16bit(int(outdoor_temp)) / 10
+            outdoor_temp = twos_complement_16bit(int(outdoor_temp)) / 10
         return outdoor_temp
 
     def get_max_setpoint(self, deviceId) -> float:
@@ -348,21 +362,6 @@ class IntesisHomeBase:
         """Public method returns the current horizontal vane setting."""
         swing = self._get_value(deviceId, "hvane")
         return swing
-
-    async def _send_update_callback(self, deviceId=None):
-        """Internal method to notify all update callback subscribers."""
-        if self._updateCallbacks:
-            for callback in self._updateCallbacks:
-                await callback(device_id=deviceId)
-        else:
-            _LOGGER.debug("Update callback has not been set by client")
-
-    @staticmethod
-    def twos_complement_16bit(val):
-        """Internal method to compute Two's Complement, to represent negative temperatures"""
-        if (val & (1 << 15)) != 0:
-            val = val - (1 << 16)
-        return val
 
     def get_error(self, deviceId) -> str:
         """Public method returns the current error code + description."""
@@ -403,7 +402,7 @@ class IntesisHomeBase:
         max_shift = int(COMMAND_MAP[name]["max"])
 
         if min_shift <= value <= max_shift:
-            unsigned_value = self._get_uint32((value * 10))  # unsigned int 16 bit
+            unsigned_value = uint32(value * 10)  # unsigned int 16 bit
             self._set_value(deviceId, COMMAND_MAP[name]["uid"], unsigned_value)
         else:
             raise ValueError(
@@ -434,6 +433,14 @@ class IntesisHomeBase:
         """Returns true when the TCP connection is disconnected and idle."""
         return not self._connected and not self._connecting
 
+    async def _send_update_callback(self, deviceId=None):
+        """Internal method to notify all update callback subscribers."""
+        if self._updateCallbacks:
+            for callback in self._updateCallbacks:
+                await callback(device_id=deviceId)
+        else:
+            _LOGGER.debug("Update callback has not been set by client")
+
     async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._updateCallbacks.append(method)
@@ -462,7 +469,6 @@ class IntesisHome(IntesisHomeBase):
         self._keepaliveTask = None
         self._reader = None
         self._writer = None
-        self._connectionRetires = 0
         self._reconnectionAttempt = 0
         self._last_message_received = 0
 
@@ -741,6 +747,7 @@ class IntesisHomeLocal(IntesisHomeBase):
         return self._values
 
     async def _run_updater(self):
+        """Run a loop that updates the values every _scan_interval."""
         while True:
             values = await self._request_values()
             for uid, value in values.items():
@@ -774,9 +781,17 @@ class IntesisHomeLocal(IntesisHomeBase):
 
         if not json_response["success"]:
             if json_response["error"]["code"] in [1, 5]:
-                raise IHAuthenticationError(json_response["error"]["message"])
+                if self._connectionRetires:
+                    raise IHAuthenticationError(json_response["error"]["message"])
+
+                # Try to reauthenticate once
+                _LOGGER.debug("Request failed. Trying to reauthenticate.")
+                self._connectionRetires += 1
+                await self._authenticate()
+                return await self._request(command, **kwargs)
             raise IHConnectionError(json_response["error"]["message"])
 
+        self._connectionRetires = 0
         return json_response.get("data")
 
     async def _request_value(self, name: str) -> dict:
