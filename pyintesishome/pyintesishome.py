@@ -769,14 +769,13 @@ class IntesisHomeLocal(IntesisHomeBase):
             "data": {"sessionID": self._session_id, **kwargs},
         }
 
-        response = await self._webSession.post(
+        async with self._webSession.post(
             f"http://{self._host}/api.cgi", json=payload
-        )
+        ) as response:
+            if response.status != 200:
+                raise IHConnectionError("HTTP response status is unexpected (not 200)")
 
-        if response.status != 200:
-            raise IHConnectionError("HTTP response status is unexpected (not 200)")
-
-        json_response = await response.json()
+            json_response = await response.json()
 
         if not json_response["success"]:
             if json_response["error"]["code"] in [1, 5]:
@@ -827,8 +826,8 @@ class IntesisHomeLocal(IntesisHomeBase):
 
     async def connect(self):
         """Connect to the device and start periodic updater."""
-        await self._authenticate()
-        _LOGGER.debug("Succesful authenticated. Fetching Datapoints.")
+        await self.poll_status()
+        _LOGGER.debug("Succesful authenticated and polled. Fetching Datapoints.")
         await self.get_datapoints()
 
         _LOGGER.debug("Starting updater task.")
