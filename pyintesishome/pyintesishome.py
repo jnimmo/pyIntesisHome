@@ -881,11 +881,7 @@ class IntesisHomeLocal(IntesisHomeBase):
         ]
 
     def _get_fan_map(self, deviceId):
-        uid = COMMAND_MAP["fan_speed"]["uid"]
-        return {
-            i: INTESIS_MAP[uid]["values"][i]
-            for i in self._datapoints[uid]["descr"]["states"]
-        }
+        return INTESIS_MAP[67]["values"][63]
 
     def has_vertical_swing(self, deviceId) -> bool:
         """Entity supports vertical swing."""
