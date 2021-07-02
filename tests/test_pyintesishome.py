@@ -1,20 +1,21 @@
 """Tests for pyintesishome."""
 import asyncio
+
 import pytest
 
+from pyintesishome import IntesisHome, IntesisHomeLocal
+from pyintesishome.const import API_URL, DEVICE_INTESISHOME, DEVICE_INTESISHOME_LOCAL
+
 from . import (
-    MOCK_VAL_RUN_HOURS,
-    cloud_api_callback,
-    mock_aioresponse,
-    local_api_callback,
+    MOCK_DEVICE_ID,
     MOCK_HOST,
     MOCK_PASS,
     MOCK_USER,
-    MOCK_DEVICE_ID,
-)  # noqa: F401
-from pyintesishome.const import DEVICE_INTESISHOME, DEVICE_INTESISHOME_LOCAL, API_URL
-from pyintesishome import IntesisHomeLocal, IntesisHome
-
+    MOCK_VAL_RUN_HOURS,
+    cloud_api_callback,
+    local_api_callback,
+    mock_aioresponse,  # noqa: F401
+)
 
 controllers = {}
 loop = asyncio.get_event_loop()

@@ -1,7 +1,6 @@
 """Tests for pyintesishome."""
 import pytest
-from aioresponses import aioresponses
-from aioresponses import CallbackResult
+from aioresponses import CallbackResult, aioresponses
 
 MOCK_HOST = "1.1.1.1"
 MOCK_PASS = "password"
