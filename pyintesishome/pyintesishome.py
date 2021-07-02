@@ -69,10 +69,6 @@ class IntesisHomeBase:
         """Internal method to send a command to the API (and connect if necessary)"""
         raise NotImplementedError()
 
-    def _get_value(self, deviceId, uid):
-        """Internal method to get a device value"""
-        return self._devices[str(deviceId)].get(uid)
-
     def _update_device_state(self, deviceId, uid, value):
         """Internal method to update the state table of IntesisHome/Airconwithme devices"""
         deviceId = str(deviceId)
@@ -125,7 +121,7 @@ class IntesisHomeBase:
 
     def get_run_hours(self, deviceId) -> str:
         """Public method returns the run hours of the IntesisHome controller."""
-        run_hours = self._get_value(deviceId, "working_hours")
+        run_hours = self.get_device_property(deviceId, "working_hours")
         return run_hours
 
     async def set_mode(self, deviceId, mode: str):
@@ -219,12 +215,12 @@ class IntesisHomeBase:
         mode_list = list()
 
         # By default, use config_mode_map to determine the available modes
-        mode_map = self._get_value(deviceId, "config_mode_map")
+        mode_map = self.get_device_property(deviceId, "config_mode_map")
         mode_bits = CONFIG_MODE_BITS
 
         if "config_operating_mode" in self._devices[str(deviceId)]:
             # If config_operating_mode is supplied, use that
-            mode_map = self._get_value(deviceId, "config_operating_mode")
+            mode_map = self.get_device_property(deviceId, "config_operating_mode")
             mode_bits = OPERATING_MODE_BITS
 
         # Generate the mode list from the map
@@ -239,7 +235,7 @@ class IntesisHomeBase:
         fan_map = self._get_fan_map(deviceId)
 
         if "fan_speed" in self._devices[str(deviceId)] and isinstance(fan_map, dict):
-            fan_speed = self._get_value(deviceId, "fan_speed")
+            fan_speed = self.get_device_property(deviceId, "fan_speed")
             return fan_map.get(fan_speed, fan_speed)
         else:
             return None
@@ -254,59 +250,61 @@ class IntesisHomeBase:
 
     def get_device_name(self, deviceId) -> str:
         """Public method to get the name of a device."""
-        return self._get_value(deviceId, "name")
+        return self.get_device_property(deviceId, "name")
 
     def get_power_state(self, deviceId) -> str:
         """Public method returns the current power state."""
-        return self._get_value(deviceId, "power")
+        return self.get_device_property(deviceId, "power")
 
     def get_instant_power_consumption(self, deviceId) -> int:
         """Public method returns the current power state."""
-        instant_power = self._get_value(deviceId, "instant_power_consumption")
+        instant_power = self.get_device_property(deviceId, "instant_power_consumption")
         if instant_power:
             return int(instant_power)
 
     def get_total_power_consumption(self, deviceId) -> int:
         """Public method returns the current power state."""
-        accumulated_power = self._get_value(deviceId, "accumulated_power_consumption")
+        accumulated_power = self.get_device_property(
+            deviceId, "accumulated_power_consumption"
+        )
         if accumulated_power:
             return int(accumulated_power)
 
     def get_cool_power_consumption(self, deviceId) -> int:
         """Public method returns the current power state."""
-        aquarea_cool = self._get_value(deviceId, "aquarea_cool_consumption")
+        aquarea_cool = self.get_device_property(deviceId, "aquarea_cool_consumption")
         if aquarea_cool:
             return int(aquarea_cool)
 
     def get_heat_power_consumption(self, deviceId) -> int:
         """Public method returns the current power state."""
-        aquarea_heat = self._get_value(deviceId, "aquarea_heat_consumption")
+        aquarea_heat = self.get_device_property(deviceId, "aquarea_heat_consumption")
         if aquarea_heat:
             return int(aquarea_heat)
 
     def get_tank_power_consumption(self, deviceId) -> int:
         """Public method returns the current power state."""
-        aquarea_tank = self._get_value(deviceId, "aquarea_tank_consumption")
+        aquarea_tank = self.get_device_property(deviceId, "aquarea_tank_consumption")
         if aquarea_tank:
             return int(aquarea_tank)
 
     def get_preset_mode(self, deviceId) -> str:
         """Public method to get the current set preset mode."""
-        return self._get_value(deviceId, "climate_working_mode")
+        return self.get_device_property(deviceId, "climate_working_mode")
 
     def is_on(self, deviceId) -> bool:
         """Return true if the controlled device is turned on"""
-        return self._get_value(deviceId, "power") == "on"
+        return self.get_device_property(deviceId, "power") == "on"
 
     def has_vertical_swing(self, deviceId) -> bool:
         """Public method to check if the device has vertical swing."""
-        vvane_config = self._get_value(deviceId, "config_vertical_vanes")
-        return vvane_config and vvane_config > 1024
+        vvane_config = self.get_device_property(deviceId, "config_vertical_vanes")
+        return bool(vvane_config and vvane_config > 1024)
 
     def has_horizontal_swing(self, deviceId) -> bool:
         """Public method to check if the device has horizontal swing."""
-        hvane_config = self._get_value(deviceId, "config_horizontal_vanes")
-        return hvane_config and hvane_config > 1024
+        hvane_config = self.get_device_property(deviceId, "config_horizontal_vanes")
+        return bool(hvane_config and hvane_config > 1024)
 
     def has_setpoint_control(self, deviceId) -> bool:
         """Public method to check if the device has setpoint control."""
@@ -314,57 +312,57 @@ class IntesisHomeBase:
 
     def get_setpoint(self, deviceId) -> float:
         """Public method returns the target temperature."""
-        setpoint = self._get_value(deviceId, "setpoint")
+        setpoint = self.get_device_property(deviceId, "setpoint")
         if setpoint:
             setpoint = int(setpoint) / 10
         return setpoint
 
     def get_temperature(self, deviceId) -> float:
         """Public method returns the current temperature."""
-        temperature = self._get_value(deviceId, "temperature")
+        temperature = self.get_device_property(deviceId, "temperature")
         if temperature:
             temperature = twos_complement_16bit(int(temperature)) / 10
         return temperature
 
     def get_outdoor_temperature(self, deviceId) -> float:
         """Public method returns the current temperature."""
-        outdoor_temp = self._get_value(deviceId, "outdoor_temp")
+        outdoor_temp = self.get_device_property(deviceId, "outdoor_temp")
         if outdoor_temp:
             outdoor_temp = twos_complement_16bit(int(outdoor_temp)) / 10
         return outdoor_temp
 
     def get_max_setpoint(self, deviceId) -> float:
         """Public method returns the current maximum target temperature."""
-        temperature = self._get_value(deviceId, "setpoint_max")
+        temperature = self.get_device_property(deviceId, "setpoint_max")
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
     def get_min_setpoint(self, deviceId) -> float:
         """Public method returns the current minimum target temperature."""
-        temperature = self._get_value(deviceId, "setpoint_min")
+        temperature = self.get_device_property(deviceId, "setpoint_min")
         if temperature:
             temperature = int(temperature) / 10
         return temperature
 
     def get_rssi(self, deviceId) -> str:
         """Public method returns the current wireless signal strength."""
-        rssi = self._get_value(deviceId, "rssi")
+        rssi = self.get_device_property(deviceId, "rssi")
         return rssi
 
     def get_vertical_swing(self, deviceId) -> str:
         """Public method returns the current vertical vane setting."""
-        swing = self._get_value(deviceId, "vvane")
+        swing = self.get_device_property(deviceId, "vvane")
         return swing
 
     def get_horizontal_swing(self, deviceId) -> str:
         """Public method returns the current horizontal vane setting."""
-        swing = self._get_value(deviceId, "hvane")
+        swing = self.get_device_property(deviceId, "hvane")
         return swing
 
     def get_error(self, deviceId) -> str:
         """Public method returns the current error code + description."""
-        error_code = self._get_value(deviceId, "error_code")
+        error_code = self.get_device_property(deviceId, "error_code")
         remote_code = ERROR_MAP[error_code]["code"]
         error_desc = ERROR_MAP[error_code]["desc"]
         return "%s: %s" % (remote_code, error_desc)
@@ -373,7 +371,7 @@ class IntesisHomeBase:
         """Internal method for getting generic value"""
         value = None
         if name in self._devices[str(deviceId)]:
-            value = self._get_value(name)
+            value = self.get_device_property(name)
             _LOGGER.debug(f"{name} = {value}")
         else:
             _LOGGER.debug(f"No value for {deviceId} {name}")
@@ -719,7 +717,7 @@ class IntesisHome(IntesisHomeBase):
         self._sendQueue.put_nowait(message)
 
     def _get_fan_map(self, deviceId):
-        return self._get_value(deviceId, "config_fan_map")
+        return self.get_device_property(deviceId, "config_fan_map")
 
 
 class IntesisHomeLocal(IntesisHomeBase):
