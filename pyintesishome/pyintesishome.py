@@ -1,9 +1,7 @@
-import argparse
 import asyncio
 import json
 import logging
 import socket
-import sys
 from datetime import datetime
 
 import aiohttp
