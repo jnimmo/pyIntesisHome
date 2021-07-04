@@ -35,6 +35,9 @@ def local_api_callback(url, **kwargs):
     req_data = req_json["data"]
 
     if req_cmd == "login":
+        assert "username" in req_data
+        assert "password" in req_data
+
         if req_data["username"] == MOCK_USER and req_data["password"] == MOCK_PASS:
             return CallbackResult(
                 status=200,
@@ -67,7 +70,7 @@ def local_api_callback(url, **kwargs):
                         "wlanFwVersion": "1.2.0",
                         "acStatus": 0,
                         "wlanLNK": 1,
-                        "ssid": "Klomp IOT",
+                        "ssid": "My SSID",
                         "rssi": -53,
                         "tcpServerLNK": 1,
                         "localdatetime": "Fri Jul 02 12:01:12 +2:00 2021 DST",
@@ -83,6 +86,8 @@ def local_api_callback(url, **kwargs):
         )
 
     if req_cmd == "getavailabledatapoints":
+        assert "sessionID" in req_data
+
         return CallbackResult(
             status=200,
             payload={
@@ -181,6 +186,10 @@ def local_api_callback(url, **kwargs):
         )
 
     if req_cmd == "getdatapointvalue":
+        assert "sessionID" in req_data
+        assert "uid" in req_data
+        assert isinstance(req_data["uid"], int) or "all"
+
         return CallbackResult(
             status=200,
             payload={
@@ -211,13 +220,27 @@ def local_api_callback(url, **kwargs):
             },
         )
 
+    if req_cmd == "setdatapointvalue":
+        assert "sessionID" in req_data
+        assert "uid" in req_data
+        assert "value" in req_data
+        assert isinstance(req_data["uid"], int)
+        assert isinstance(req_data["value"], int)
+
+        return CallbackResult(
+            status=200,
+            payload={
+                "success": True,
+                "data": None,
+            },
+        )
+
     return CallbackResult(status=500)
 
 
 def cloud_api_callback(url, **kwargs):
     req_data = kwargs["data"]
     req_cmd = req_data["cmd"]
-    print(req_cmd)
 
     payload = {}
 
@@ -244,7 +267,7 @@ def cloud_api_callback(url, **kwargs):
                 {"deviceId": MOCK_DEVICE_ID, "uid": 54, "value": 0},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 61, "value": 63},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 62, "value": 0},
-                {"deviceId": MOCK_DEVICE_ID, "uid": 63, "value": 0},
+                {"deviceId": MOCK_DEVICE_ID, "uid": 63, "value": 1054},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 64, "value": 1054},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 65, "value": 0},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 66, "value": 0},
