@@ -1,7 +1,7 @@
 """Tests for pyintesishome."""
 import asyncio
-import aiohttp
 
+import aiohttp
 import pytest
 
 from pyintesishome import IntesisHome, IntesisHomeLocal
