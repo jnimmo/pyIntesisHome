@@ -48,7 +48,7 @@ loop.run_until_complete(async_setup_controllers())
 @pytest.mark.parametrize("controller", controllers.values(), ids=controllers.keys())
 class TestPyIntesisHome:
     @pytest.fixture(autouse=True)
-    async def _setup(self, mock_aioresponse):  # noqa: F811
+    async def _setup(self, mock_aioresponse, loop):  # noqa: F811
         mock_aioresponse.post(
             f"http://{MOCK_HOST}/api.cgi",
             callback=local_api_callback,
