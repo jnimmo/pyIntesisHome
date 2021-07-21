@@ -501,17 +501,17 @@ class IntesisHome(IntesisHomeBase):
         elif resp["command"] == "status":
             # Value has changed
             self._update_device_state(
-                resp["data"]["device_id"],
+                resp["data"]["deviceId"],
                 resp["data"]["uid"],
                 resp["data"]["value"],
             )
             if resp["data"]["uid"] != 60002:
                 await self._send_update_callback(
-                    device_id=str(resp["data"]["device_id"])
+                    device_id=str(resp["data"]["deviceId"])
                 )
         elif resp["command"] == "rssi":
             # Wireless strength has changed
-            self._update_rssi(resp["data"]["device_id"], resp["data"]["value"])
+            self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
         return
 
     async def _send_keepalive(self):
@@ -717,7 +717,7 @@ class IntesisHome(IntesisHomeBase):
 
             # Update device status
             for status in status_response["status"]["status"]:
-                device_id = str(status["device_id"])
+                device_id = str(status["deviceId"])
 
                 # Handle devices which don't appear in installation
                 if device_id not in self._devices:
@@ -736,7 +736,7 @@ class IntesisHome(IntesisHomeBase):
     async def _set_value(self, device_id, uid, value):
         """Internal method to send a command to the API (and connect if necessary)"""
         message = (
-            '{"command":"set","data":{"device_id":%s,"uid":%i,"value":%i,"seqNo":0}}'
+            '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}'
             % (device_id, uid, value)
         )
         self._send_queue.put_nowait(message)
