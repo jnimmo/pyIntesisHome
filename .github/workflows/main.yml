@@ -65,6 +65,7 @@ jobs:
       - black
       - isort
       - flake8
+      - pylint
     env:
       PYTHON: ${{ matrix.python-version }}
     steps:
