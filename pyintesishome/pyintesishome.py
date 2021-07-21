@@ -599,13 +599,15 @@ class IntesisHome(IntesisHomeBase):
                 )
 
                 # Set socket timeout
-                if self._reader._transport._sock:
-                    self._reader._transport._sock.settimeout(60)
+                if self._reader._transport._sock:  # pylint: disable=protected-access
+                    self._reader._transport._sock.settimeout(  # pylint: disable=protected-access
+                        60
+                    )
                     try:
-                        self._reader._transport._sock.setsockopt(
+                        self._reader._transport._sock.setsockopt(  # pylint: disable=protected-access
                             socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 60 * 1000
                         )
-                        self._reader._transport._sock.setsockopt(
+                        self._reader._transport._sock.setsockopt(  # pylint: disable=protected-access
                             socket.IPPROTO_TCP, socket.SO_KEEPALIVE, 60 * 1000
                         )
                     except Exception:  # pylint: disable=broad-except
@@ -624,7 +626,8 @@ class IntesisHome(IntesisHomeBase):
                 await self._writer.drain()
                 _LOGGER.debug("Data sent: %s", auth_msg)
                 _LOGGER.debug(
-                    "Socket timeout is %s", self._reader._transport._sock.gettimeout()
+                    "Socket timeout is %s",
+                    self._reader._transport._sock.gettimeout(),  # pylint: disable=protected-access
                 )
 
                 self._event_loop.create_task(self._handle_packets())
@@ -651,10 +654,10 @@ class IntesisHome(IntesisHomeBase):
         """Public method for shutting down connectivity with the envisalink."""
         self._connected = False
         if self._writer:
-            self._writer._transport.close()
+            self._writer._transport.close()  # pylint: disable=protected-access
 
         if self._reader:
-            self._reader._transport.close()
+            self._reader._transport.close()  # pylint: disable=protected-access
 
         if self._own_session:
             await self._web_session.close()
