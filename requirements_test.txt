@@ -1,3 +1,4 @@
+aioresponses
 pytest
 pytest-aiohttp
 pytest-cov
