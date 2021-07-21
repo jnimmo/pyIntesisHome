@@ -1,5 +1,6 @@
 """Tests for pyintesishome."""
 import asyncio
+import aiohttp
 
 import pytest
 
@@ -23,10 +24,13 @@ loop = asyncio.get_event_loop()
 
 async def async_setup_controllers():
     # The aiohttp.ClientSession should be created within an async function
+    session = aiohttp.ClientSession()
+
     controllers["local"] = IntesisHomeLocal(
         MOCK_HOST,
         MOCK_USER,
         MOCK_PASS,
+        websession=session,
         device_type=DEVICE_INTESISHOME_LOCAL,
     )
 
