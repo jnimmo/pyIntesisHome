@@ -6,6 +6,7 @@ import pytest
 from pyintesishome import IntesisHome, IntesisHomeLocal
 from pyintesishome.const import API_URL, DEVICE_INTESISHOME, DEVICE_INTESISHOME_LOCAL
 
+from . import mock_aioresponse  # noqa: F401
 from . import (
     MOCK_DEVICE_ID,
     MOCK_HOST,
@@ -14,7 +15,6 @@ from . import (
     MOCK_VAL_RUN_HOURS,
     cloud_api_callback,
     local_api_callback,
-    mock_aioresponse,  # noqa: F401
 )
 
 controllers = {}
@@ -44,7 +44,7 @@ loop.run_until_complete(async_setup_controllers())
 @pytest.mark.parametrize("controller", controllers.values(), ids=controllers.keys())
 class TestPyIntesisHome:
     @pytest.fixture(autouse=True)
-    async def _setup(self, mock_aioresponse):
+    async def _setup(self, mock_aioresponse):  # noqa: F811
         mock_aioresponse.post(
             f"http://{MOCK_HOST}/api.cgi",
             callback=local_api_callback,
@@ -59,7 +59,7 @@ class TestPyIntesisHome:
 
     async def test_connect(self, controller):
         result = await controller.connect()
-        assert result == None
+        assert result is None
 
     def test_get_power_state(self, controller):
         result = controller.get_power_state(MOCK_DEVICE_ID)
@@ -103,7 +103,7 @@ class TestPyIntesisHome:
     def test_has_vertical_swing(self, controller):
         result = controller.has_vertical_swing(MOCK_DEVICE_ID)
         assert isinstance(result, bool)
-        assert result == True
+        assert result is True
 
     def test_get_vertical_swing(self, controller):
         result = controller.get_vertical_swing(MOCK_DEVICE_ID)
@@ -116,7 +116,7 @@ class TestPyIntesisHome:
     def test_has_horizontal_swing(self, controller):
         result = controller.has_horizontal_swing(MOCK_DEVICE_ID)
         assert isinstance(result, bool)
-        assert result == True
+        assert result is True
 
     def test_get_horizontal_swing(self, controller):
         result = controller.get_horizontal_swing(MOCK_DEVICE_ID)
@@ -129,7 +129,7 @@ class TestPyIntesisHome:
     def test_has_setpoint_control(self, controller):
         result = controller.has_setpoint_control(MOCK_DEVICE_ID)
         assert isinstance(result, bool)
-        assert result == True
+        assert result is True
 
     def test_get_setpoint(self, controller):
         result = controller.get_setpoint(MOCK_DEVICE_ID)
