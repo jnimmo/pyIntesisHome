@@ -1,6 +1,9 @@
+""" Exceptions for pyintesishome """
+
+
 class IHConnectionError(Exception):
-    pass
+    """Connection Error"""
 
 
 class IHAuthenticationError(ConnectionError):
-    pass
+    """Authentication Error"""

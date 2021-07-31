@@ -2,10 +2,8 @@ import argparse
 import asyncio
 import logging
 import sys
-import aiohttp
 
-_LOGGER = logging.getLogger("pyintesishome")
-
+from pyintesishome import IntesisHome, IntesisHomeLocal
 from pyintesishome.const import (
     DEVICE_AIRCONWITHME,
     DEVICE_ANYWAIR,
@@ -13,7 +11,7 @@ from pyintesishome.const import (
     DEVICE_INTESISHOME_LOCAL,
 )
 
-from pyintesishome import IntesisHome, IntesisHomeLocal
+_LOGGER = logging.getLogger("pyintesishome")
 
 
 async def main(loop):
