@@ -909,6 +909,10 @@ class IntesisHomeLocal(IntesisHomeBase):
         ]
 
     def _get_fan_map(self, device_id):
+        fan_values = sorted(self._datapoints[4]["descr"]["states"])
+        for values in INTESIS_MAP[67]["values"].values():
+            if sorted(values.keys()) == fan_values:
+                return values
         return INTESIS_MAP[67]["values"][63]
 
     def has_vertical_swing(self, device_id) -> bool:
