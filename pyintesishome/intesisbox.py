@@ -1,25 +1,14 @@
 """ Main submodule for pyintesishome """
 import asyncio
-from asyncio.streams import StreamReader, StreamWriter
 import logging
-from datetime import datetime
-from typing import List
-
-import aiohttp
 from asyncio.exceptions import IncompleteReadError
+from asyncio.streams import StreamReader, StreamWriter
+from typing import List
 
 from pyintesishome.intesisbase import IntesisBase
 
 from .const import (
-    API_URL,
-    API_VER,
-    COMMAND_MAP,
-    CONFIG_MODE_BITS,
     DEVICE_INTESISBOX,
-    DEVICE_INTESISHOME,
-    ERROR_MAP,
-    INTESIS_CMD_STATUS,
-    INTESIS_MAP,
     INTESIS_NULL,
     INTESISBOX_CMD_FANSP,
     INTESISBOX_CMD_GET_AVAIL_DP,
@@ -31,15 +20,8 @@ from .const import (
     INTESISBOX_INIT,
     INTESISBOX_MAP,
     INTESISBOX_MODE_MAP,
-    LOCAL_CMD_GET_AVAIL_DP,
-    LOCAL_CMD_GET_DP_VALUE,
-    LOCAL_CMD_GET_INFO,
-    LOCAL_CMD_LOGIN,
-    LOCAL_CMD_SET_DP_VALUE,
-    OPERATING_MODE_BITS,
 )
-from .exceptions import IHAuthenticationError, IHConnectionError
-from .helpers import twos_complement_16bit, uint32
+from .helpers import uint32
 
 _LOGGER = logging.getLogger("pyintesishome")
 
@@ -58,9 +40,9 @@ class IntesisBox(IntesisBase):
         self._mac: str = ""
         self._update_task = None
         self._receive_task = None
-        self._reader = None
+        self._reader: StreamReader = None
         self._port = 3310
-        self._writer = None
+        self._writer: StreamWriter = None
         self._last_command: str = ""
         self._received_response: asyncio.Event = asyncio.Event()
 
@@ -134,7 +116,7 @@ class IntesisBox(IntesisBase):
                 _LOGGER.debug(f"Received {data!r}")
                 await self.parse_response(data)
 
-        except IncompleteReadError as exc:
+        except IncompleteReadError:
             _LOGGER.info(
                 "pyIntesisHome lost connection to the %s server.", self._device_type
             )

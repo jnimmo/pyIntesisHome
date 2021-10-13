@@ -2,47 +2,19 @@ from pyintesishome.intesisbase import IntesisBase
 
 """ Main submodule for pyintesishome """
 import asyncio
-from asyncio import queues
-from asyncio.streams import StreamReader, StreamWriter
-import json
 import logging
-import socket
-from datetime import datetime
-from typing import List
-
-import aiohttp
-from asyncio.exceptions import IncompleteReadError
 
 from .const import (
-    API_URL,
-    API_VER,
     COMMAND_MAP,
-    CONFIG_MODE_BITS,
-    DEVICE_INTESISBOX,
     DEVICE_INTESISHOME,
-    ERROR_MAP,
-    INTESIS_CMD_STATUS,
     INTESIS_MAP,
-    INTESIS_NULL,
-    INTESISBOX_CMD_FANSP,
-    INTESISBOX_CMD_GET_AVAIL_DP,
-    INTESISBOX_CMD_MODE,
-    INTESISBOX_CMD_ONOFF,
-    INTESISBOX_CMD_SETPOINT,
-    INTESISBOX_CMD_VANELR,
-    INTESISBOX_CMD_VANEUD,
-    INTESISBOX_INIT,
-    INTESISBOX_MAP,
-    INTESISBOX_MODE_MAP,
     LOCAL_CMD_GET_AVAIL_DP,
     LOCAL_CMD_GET_DP_VALUE,
     LOCAL_CMD_GET_INFO,
     LOCAL_CMD_LOGIN,
     LOCAL_CMD_SET_DP_VALUE,
-    OPERATING_MODE_BITS,
 )
 from .exceptions import IHAuthenticationError, IHConnectionError
-from .helpers import twos_complement_16bit, uint32
 
 _LOGGER = logging.getLogger("pyintesishome")
 

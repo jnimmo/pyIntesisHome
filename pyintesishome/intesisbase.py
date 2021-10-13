@@ -1,13 +1,9 @@
 """ Main submodule for pyintesishome """
 import asyncio
-from asyncio.streams import StreamReader, StreamWriter
-from asyncio.exceptions import IncompleteReadError
 import logging
-from datetime import datetime
-from typing import List
+from asyncio.streams import StreamReader, StreamWriter
 
 import aiohttp
-
 
 from .const import (
     COMMAND_MAP,
@@ -18,7 +14,6 @@ from .const import (
     INTESIS_NULL,
     OPERATING_MODE_BITS,
 )
-from .exceptions import IHAuthenticationError, IHConnectionError
 from .helpers import twos_complement_16bit, uint32
 
 _LOGGER = logging.getLogger("pyintesishome")
