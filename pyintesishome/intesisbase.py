@@ -1,8 +1,8 @@
 """Base class for Intesis controllers."""
 import asyncio
+import logging
 from asyncio.exceptions import IncompleteReadError
 from asyncio.streams import StreamReader, StreamWriter
-import logging
 
 import aiohttp
 
@@ -156,8 +156,8 @@ class IntesisBase:
     async def stop(self):
         """Public method for shutting down connectivity."""
         self._connected = False
-        self._cancel_task_if_exists(self._receive_task)
-        self._cancel_task_if_exists(self._keepalive_task)
+        await self._cancel_task_if_exists(self._receive_task)
+        await self._cancel_task_if_exists(self._keepalive_task)
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()

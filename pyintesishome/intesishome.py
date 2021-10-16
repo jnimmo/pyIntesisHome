@@ -85,7 +85,7 @@ class IntesisHome(IntesisBase):
             self._connection_retries = 0
 
             self._devices = {}
-            self._cancel_task_if_exists(self._receive_task)
+            await self._cancel_task_if_exists(self._receive_task)
 
             _LOGGER.debug(
                 "Opening connection to %s API at %s:%i",

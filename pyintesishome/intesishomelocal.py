@@ -3,7 +3,6 @@
 import asyncio
 import logging
 
-from .intesisbase import IntesisBase
 from .const import (
     COMMAND_MAP,
     DEVICE_INTESISHOME_LOCAL,
@@ -15,6 +14,7 @@ from .const import (
     LOCAL_CMD_SET_DP_VALUE,
 )
 from .exceptions import IHAuthenticationError, IHConnectionError
+from .intesisbase import IntesisBase
 
 _LOGGER = logging.getLogger("pyintesishome")
 
@@ -138,7 +138,7 @@ class IntesisHomeLocal(IntesisBase):
     async def stop(self):
         """Disconnect and stop periodic updater."""
         _LOGGER.debug("Stopping updater task.")
-        self._cancel_task_if_exists(self._update_task)
+        await self._cancel_task_if_exists(self._update_task)
         self._connected = False
 
         if self._own_session:
