@@ -3,8 +3,7 @@
 import asyncio
 import logging
 
-from pyintesishome import IntesisBase
-
+from .intesisbase import IntesisBase
 from .const import (
     COMMAND_MAP,
     DEVICE_INTESISHOME_LOCAL,
@@ -19,19 +18,12 @@ from .exceptions import IHAuthenticationError, IHConnectionError
 
 _LOGGER = logging.getLogger("pyintesishome")
 
-
+# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
 class IntesisHomeLocal(IntesisBase):
     """pyintesishome local class"""
 
-    def __init__(
-        self,
-        host,
-        username,
-        password,
-        loop=None,
-        websession=None,
-        device_type=DEVICE_INTESISHOME_LOCAL,
-    ):
+    def __init__(self, host, username, password, loop=None, websession=None):
+        device_type = (DEVICE_INTESISHOME_LOCAL,)
         self._session_id: str = ""
         self._datapoints: dict = {}
         self._scan_interval = 5
@@ -146,11 +138,7 @@ class IntesisHomeLocal(IntesisBase):
     async def stop(self):
         """Disconnect and stop periodic updater."""
         _LOGGER.debug("Stopping updater task.")
-        try:
-            self._update_task.cancel()
-            await self._update_task
-        except asyncio.CancelledError:
-            pass
+        self._cancel_task_if_exists(self._update_task)
         self._connected = False
 
         if self._own_session:
@@ -205,3 +193,7 @@ class IntesisHomeLocal(IntesisBase):
     def has_horizontal_swing(self, device_id) -> bool:
         """Entity supports horizontal swing."""
         return self._has_datapoint("hvane")
+
+    async def _parse_response(self, decoded_data):
+        """Private method to parse the API response."""
+        raise NotImplementedError()

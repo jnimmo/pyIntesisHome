@@ -1,7 +1,8 @@
 """Base class for Intesis controllers."""
 import asyncio
-import logging
+from asyncio.exceptions import IncompleteReadError
 from asyncio.streams import StreamReader, StreamWriter
+import logging
 
 import aiohttp
 
@@ -52,6 +53,8 @@ class IntesisBase:
         self._controller_name = username
         self._writer: StreamWriter = None
         self._reader: StreamReader = None
+        self._received_response: asyncio.Event = asyncio.Event()
+        self._data_delimiter = b"}}"
 
         if loop:
             _LOGGER.debug("Using the provided event loop")
@@ -68,6 +71,57 @@ class IntesisBase:
     async def _set_value(self, device_id, uid, value):
         """Internal method to send a value to the device."""
         raise NotImplementedError()
+
+    async def _send_command(self, command: str):
+        try:
+            _LOGGER.debug("Sending command %s", command)
+            self._received_response.clear()
+            if self._writer:
+                self._writer.write(command.encode("ascii"))
+                await self._writer.drain()
+                try:
+                    await asyncio.wait_for(
+                        self._received_response.wait(),
+                        timeout=5.0,
+                    )
+                except asyncio.TimeoutError:
+                    print("oops took longer than 5s!")
+        except OSError as exc:
+            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
+
+    async def _data_received(self):
+        try:
+            while self._reader:
+                raw_data = await self._reader.readuntil(self._data_delimiter)
+                if not raw_data:
+                    break
+                data = raw_data.decode("ascii")
+                _LOGGER.debug("Received: %s", data)
+                await self._parse_response(data)
+
+                if not self._received_response.is_set():
+                    _LOGGER.debug("Resolving set_value's await")
+                    self._received_response.set()
+        except IncompleteReadError:
+            _LOGGER.info(
+                "pyIntesisHome lost connection to the %s server.", self._device_type
+            )
+        except asyncio.CancelledError:
+            pass
+        except (
+            TimeoutError,
+            ConnectionResetError,
+            OSError,
+        ) as exc:
+            _LOGGER.error(
+                "pyIntesisHome lost connection to the %s server. Exception: %s",
+                self._device_type,
+                exc,
+            )
+        finally:
+            self._connected = False
+            self._connecting = False
+            await self._send_update_callback()
 
     def _update_device_state(self, device_id, uid, value):
         """Internal method to update the state table of IntesisHome/Airconwithme devices."""
@@ -102,24 +156,22 @@ class IntesisBase:
     async def stop(self):
         """Public method for shutting down connectivity."""
         self._connected = False
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                pass
-        if self._keepalive_task:
-            self._keepalive_task.cancel()
-            try:
-                await self._keepalive_task
-            except asyncio.CancelledError:
-                _LOGGER.debug("Keepalive task cancelled")
+        self._cancel_task_if_exists(self._receive_task)
+        self._cancel_task_if_exists(self._keepalive_task)
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()
 
         if self._own_session:
             await self._web_session.close()
+
+    async def _cancel_task_if_exists(self, task: asyncio.Task):
+        if task:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device.
@@ -460,12 +512,14 @@ class IntesisBase:
         """Returns an account/device identifier - Serial, MAC or username."""
         if self._controller_id:
             return self._controller_id.lower()
+        return None
 
     @property
     def name(self) -> str:
         """Returns an account/device identifier - Serial, MAC or username."""
         if self._controller_name:
             return self._controller_name
+        return None
 
     @property
     def is_disconnected(self) -> bool:
@@ -488,4 +542,8 @@ class IntesisBase:
 
     def _get_fan_map(self, device_id):
         """Private method to get the fan_map."""
+        raise NotImplementedError()
+
+    async def _parse_response(self, decoded_data):
+        """Private method to parse the API response."""
         raise NotImplementedError()

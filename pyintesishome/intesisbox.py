@@ -1,8 +1,6 @@
 """IntesisBox class."""
 import asyncio
 import logging
-from asyncio.exceptions import IncompleteReadError
-from asyncio.streams import StreamReader, StreamWriter
 from typing import List
 
 from pyintesishome.intesisbase import IntesisBase
@@ -25,7 +23,7 @@ from .helpers import uint32
 
 _LOGGER = logging.getLogger("pyintesishome")
 
-
+# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
 class IntesisBox(IntesisBase):
     """IntesisBox local class."""
 
@@ -39,13 +37,9 @@ class IntesisBox(IntesisBase):
         self._values: dict = {}
         self._info: dict = {}
         self._mac: str = ""
-        self._update_task = None
-        self._receive_task = None
-        self._reader: StreamReader = None
         self._port = 3310
-        self._writer: StreamWriter = None
         self._last_command: str = ""
-        self._received_response: asyncio.Event = asyncio.Event()
+        self._data_delimiter = b"\r"
 
     async def connect(self):
         """Public method for making the controller connect."""
@@ -54,12 +48,7 @@ class IntesisBox(IntesisBase):
             return
 
         self._devices = {}
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                _LOGGER.debug("Receive task cancelled")
+        self._cancel_task_if_exists(self._receive_task)
 
         _LOGGER.debug("Connecting")
         try:
@@ -90,7 +79,7 @@ class IntesisBox(IntesisBase):
             )
         self._connected = True
 
-    async def parse_response(self, decoded_data):
+    async def _parse_response(self, decoded_data):
         """Parses the API response and routes to the correct handler method."""
         lines_received: List[str] = decoded_data.strip().splitlines()
         for line in lines_received:
@@ -108,37 +97,6 @@ class IntesisBox(IntesisBase):
             if not self._received_response.is_set():
                 _LOGGER.debug("Resolving set_value's await")
                 self._received_response.set()
-
-    async def _data_received(self):
-        try:
-            while self._reader:
-                raw_data = await self._reader.readuntil(b"\r")
-                if not raw_data:
-                    break
-                data = raw_data.decode("ascii")
-                _LOGGER.debug("Received: %s", data)
-                await self.parse_response(data)
-
-        except IncompleteReadError:
-            _LOGGER.error(
-                "pyIntesisHome lost connection to the %s server.", self._device_type
-            )
-        except asyncio.CancelledError:
-            pass
-        except (
-            TimeoutError,
-            ConnectionResetError,
-            OSError,
-        ) as exc:
-            _LOGGER.error(
-                "pyIntesisHome lost connection to the %s server. Exception: %s",
-                self._device_type,
-                exc,
-            )
-        finally:
-            self._connected = False
-            self._connecting = False
-            await self._send_update_callback()
 
     def _parse_id_received(self, args):
         # ID:Model,MAC,IP,Protocol,Version,RSSI
@@ -160,22 +118,6 @@ class IntesisBox(IntesisBase):
                 "model": self._info["deviceModel"],
             }
         _LOGGER.debug(repr(self._devices))
-
-    async def _send_command(self, command: str):
-        try:
-            self._received_response.clear()
-            _LOGGER.debug("Sending command %s", command)
-            self._writer.write(command.encode("ascii"))
-            await self._writer.drain()
-            try:
-                await asyncio.wait_for(
-                    self._received_response.wait(),
-                    timeout=5.0,
-                )
-            except asyncio.TimeoutError:
-                print("oops took longer than 5s!")
-        except OSError as exc:
-            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
 
     def _parse_change_received(self, args):
         function, value = args.split(",")
@@ -205,7 +147,6 @@ class IntesisBox(IntesisBase):
                 self._devices[self._device_id]["vvane_list"] = values
             elif function == INTESISBOX_CMD_VANELR:
                 self._devices[self._device_id]["hvane_list"] = values
-        return
 
     async def set_mode(self, device_id, mode: str):
         """Internal method for setting the mode with a string value."""
@@ -275,5 +216,4 @@ class IntesisBox(IntesisBase):
         fan_map_list = self._devices[self._device_id].get("config_fan_map")
         if isinstance(fan_map_list, list):
             return dict(zip(fan_map_list, fan_map_list))
-        else:
-            return None
+        return None

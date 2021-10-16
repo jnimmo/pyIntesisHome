@@ -3,8 +3,6 @@ import asyncio
 import json
 import logging
 import socket
-from asyncio.exceptions import IncompleteReadError
-from asyncio.streams import StreamReader, StreamWriter
 
 import aiohttp
 
@@ -14,7 +12,7 @@ from .intesisbase import IntesisBase
 
 _LOGGER = logging.getLogger("pyintesishome")
 
-
+# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
 class IntesisHome(IntesisBase):
     """pyintesishome cloud class"""
 
@@ -27,24 +25,21 @@ class IntesisHome(IntesisBase):
         device_type=DEVICE_INTESISHOME,
     ):
         super().__init__(
-            username=username,
-            password=password,
-            loop=loop,
-            websession=websession,
             device_type=device_type,
+            username=username,
+            loop=loop,
+            password=password,
+            websession=websession,
         )
         self._api_url = API_URL[device_type]
         self._api_ver = API_VER[device_type]
         self._cmd_server = None
         self._cmd_server_port = None
         self._auth_token = None
-        self._reader: StreamReader = None
-        self._writer: StreamWriter = None
-        self._received_response: asyncio.Event = asyncio.Event()
 
-    async def _parse_response(self, message):
-        _LOGGER.debug("%s API Received: %s", self._device_type, message)
-        resp = json.loads(message)
+    async def _parse_response(self, decoded_data):
+        _LOGGER.debug("%s API Received: %s", self._device_type, decoded_data)
+        resp = json.loads(decoded_data)
         # Parse response
         if resp["command"] == "connect_rsp":
             # New connection success
@@ -70,23 +65,6 @@ class IntesisHome(IntesisBase):
             self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
         return
 
-    async def _send_command(self, command: str):
-        try:
-            _LOGGER.debug("Sending command %s", command)
-            self._received_response.clear()
-            if self._writer:
-                self._writer.write(command.encode("ascii"))
-                await self._writer.drain()
-                try:
-                    await asyncio.wait_for(
-                        self._received_response.wait(),
-                        timeout=5.0,
-                    )
-                except asyncio.TimeoutError:
-                    print("oops took longer than 5s!")
-        except OSError as exc:
-            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
-
     async def _send_keepalive(self):
         try:
             while True:
@@ -100,41 +78,6 @@ class IntesisHome(IntesisBase):
         except asyncio.CancelledError:
             _LOGGER.debug("Cancelled the keepalive task")
 
-    async def _data_received(self):
-        try:
-            while self._reader:
-                raw_data = await self._reader.readuntil(b"}}")
-                if not raw_data:
-                    break
-                data = raw_data.decode("ascii")
-                _LOGGER.debug("Received: %s", data)
-                await self._parse_response(data)
-
-                if not self._received_response.is_set():
-                    _LOGGER.debug("Resolving set_value's await")
-                    self._received_response.set()
-        except IncompleteReadError:
-            _LOGGER.info(
-                "pyIntesisHome lost connection to the %s server.", self._device_type
-            )
-        except asyncio.CancelledError:
-            pass
-        except (
-            TimeoutError,
-            ConnectionResetError,
-            OSError,
-        ) as exc:
-            _LOGGER.error(
-                "pyIntesisHome lost connection to the %s server. Exception: %s",
-                self._device_type,
-                exc,
-            )
-        finally:
-            self._connected = False
-            self._connecting = False
-            self._auth_token = None
-            await self._send_update_callback()
-
     async def connect(self):
         """Public method for connecting to IntesisHome/Airconwithme API"""
         if not self._connected and not self._connecting:
@@ -142,12 +85,7 @@ class IntesisHome(IntesisBase):
             self._connection_retries = 0
 
             self._devices = {}
-            if self._receive_task:
-                self._receive_task.cancel()
-                try:
-                    await self._receive_task
-                except asyncio.CancelledError:
-                    _LOGGER.debug("Receive task cancelled")
+            self._cancel_task_if_exists(self._receive_task)
 
             _LOGGER.debug(
                 "Opening connection to %s API at %s:%i",
