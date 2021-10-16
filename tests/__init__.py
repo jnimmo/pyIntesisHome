@@ -29,6 +29,10 @@ def mock_aioresponse():
         yield m
 
 
+def intesisbox_api_callback(url, **kwargs):
+    raise NotImplementedError()
+
+
 def local_api_callback(url, **kwargs):
     req_json = kwargs.pop("json")
     req_cmd = req_json["command"]
