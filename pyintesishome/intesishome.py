@@ -88,6 +88,15 @@ class IntesisHome(IntesisBase):
             self._devices = {}
             await self._cancel_task_if_exists(self._receive_task)
 
+            try:
+                self._auth_token = await self.poll_status()
+            except IHAuthenticationError as exc:
+                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                raise IHAuthenticationError from exc
+            except IHConnectionError as exc:
+                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                raise IHConnectionError from exc
+
             _LOGGER.debug(
                 "Opening connection to %s API at %s:%i",
                 self._device_type,
@@ -100,10 +109,9 @@ class IntesisHome(IntesisBase):
                     self._cmd_server, self._cmd_server_port
                 )
 
-                # Authenticate
                 # pylint: disable=C0209
                 auth_msg = '{"command":"connect_req","data":{"token":%s}}' % (
-                    await self.poll_status()
+                    self._auth_token
                 )
                 await self._send_command(auth_msg)
                 # Clear the OTP
@@ -113,12 +121,6 @@ class IntesisHome(IntesisBase):
                     self._send_keepalive()
                 )
             # Get authentication token over HTTP POST
-            except IHAuthenticationError as exc:
-                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                raise IHAuthenticationError from exc
-            except IHConnectionError as exc:
-                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                raise IHConnectionError from exc
             except (  # pylint: disable=broad-except
                 ConnectionRefusedError,
                 Exception,
