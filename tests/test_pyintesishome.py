@@ -15,8 +15,8 @@ from . import (
     MOCK_USER,
     MOCK_VAL_RUN_HOURS,
     cloud_api_callback,
-    local_api_callback,
     intesisbox_api_callback,
+    local_api_callback,
 )
 
 controllers = {}
