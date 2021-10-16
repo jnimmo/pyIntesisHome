@@ -165,7 +165,8 @@ class IntesisBase:
         if self._own_session:
             await self._web_session.close()
 
-    async def _cancel_task_if_exists(self, task: asyncio.Task):
+    @staticmethod
+    async def _cancel_task_if_exists(task: asyncio.Task):
         if task:
             task.cancel()
             try:
@@ -286,7 +287,7 @@ class IntesisBase:
 
     def get_mode_list(self, device_id) -> list:
         """Public method to return the list of device modes."""
-        mode_list = list()
+        mode_list = []
 
         # By default, use config_mode_map to determine the available modes
         mode_map = self.get_device_property(device_id, "config_mode_map")
@@ -444,7 +445,7 @@ class IntesisBase:
         error_code = self.get_device_property(device_id, "error_code")
         remote_code = ERROR_MAP[error_code]["code"]
         error_desc = ERROR_MAP[error_code]["desc"]
-        return "%s: %s" % (remote_code, error_desc)
+        return f"{remote_code}: {error_desc}"
 
     def _get_gen_value(self, device_id, name) -> str:
         """Internal method for getting generic value"""
@@ -484,7 +485,7 @@ class IntesisBase:
             self._set_value(device_id, COMMAND_MAP[name]["uid"], unsigned_value)
         else:
             raise ValueError(
-                "Value for %s has to be in range [%d,%d]" % name, min_shift, max_shift
+                f"Value for {name} has to be in range [{min_shift}],{max_shift}]"
             )
 
     @property

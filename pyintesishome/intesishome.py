@@ -101,6 +101,7 @@ class IntesisHome(IntesisBase):
                 )
 
                 # Authenticate
+                # pylint: disable=C0209
                 auth_msg = '{"command":"connect_req","data":{"token":%s}}' % (
                     await self.poll_status()
                 )
@@ -202,6 +203,7 @@ class IntesisHome(IntesisBase):
 
         return self._auth_token
 
+    # pylint: disable=C0209
     async def _set_value(self, device_id, uid, value):
         """Internal method to send a command to the API (and connect if necessary)"""
         message = (
