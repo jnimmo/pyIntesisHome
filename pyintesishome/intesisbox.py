@@ -24,6 +24,8 @@ from .helpers import uint32
 _LOGGER = logging.getLogger("pyintesishome")
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
+
+
 class IntesisBox(IntesisBase):
     """IntesisBox local class."""
 
