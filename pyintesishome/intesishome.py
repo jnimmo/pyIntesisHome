@@ -3,8 +3,8 @@ import asyncio
 import json
 import logging
 import socket
+from asyncio.exceptions import IncompleteReadError
 from asyncio.streams import StreamReader, StreamWriter
-from datetime import datetime
 
 import aiohttp
 
@@ -26,19 +26,6 @@ class IntesisHome(IntesisBase):
         websession=None,
         device_type=DEVICE_INTESISHOME,
     ):
-        self._api_url = API_URL[device_type]
-        self._api_ver = API_VER[device_type]
-        self._cmd_server = None
-        self._cmd_server_port = None
-        self._auth_token = None
-        self._send_queue = asyncio.Queue()
-        self._send_queue_task = None
-        self._keepalive_task = None
-        self._reader: StreamReader = None
-        self._writer: StreamWriter = None
-        self._reconnection_attempt = 0
-        self._last_message_received = 0
-
         super().__init__(
             username=username,
             password=password,
@@ -46,10 +33,17 @@ class IntesisHome(IntesisBase):
             websession=websession,
             device_type=device_type,
         )
+        self._api_url = API_URL[device_type]
+        self._api_ver = API_VER[device_type]
+        self._cmd_server = None
+        self._cmd_server_port = None
+        self._auth_token = None
+        self._reader: StreamReader = None
+        self._writer: StreamWriter = None
+        self._received_response: asyncio.Event = asyncio.Event()
 
-    async def _parse_api_messages(self, message):
+    async def _parse_response(self, message):
         _LOGGER.debug("%s API Received: %s", self._device_type, message)
-        self._last_message_received = datetime.now()
         resp = json.loads(message)
         # Parse response
         if resp["command"] == "connect_rsp":
@@ -76,56 +70,70 @@ class IntesisHome(IntesisBase):
             self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
         return
 
-    async def _send_keepalive(self):
-        while True:
-            await asyncio.sleep(240)
-            _LOGGER.debug("sending keepalive to {self._device_type}")
-            device_id = str(next(iter(self._devices)))
-            message = f'{{"command":"get","data":{{"deviceId":{device_id},"uid":10}}}}'
-            await self._send_queue.put(message)
-
-    async def _handle_packets(self):
-        data = True
-        while data:
-            try:
-                data = await self._reader.readuntil(b"}}")
-                if not data:
-                    break
-                message = data.decode("ascii")
-                await self._parse_api_messages(message)
-
-            except (
-                asyncio.IncompleteReadError,
-                TimeoutError,
-                ConnectionResetError,
-                OSError,
-            ) as exc:
-                _LOGGER.error(
-                    "pyIntesisHome lost connection to the %s server. Exception: %s",
-                    self._device_type,
-                    exc,
-                )
-                break
-
-        self._connected = False
-        self._connecting = False
-        self._auth_token = None
-        self._reader = None
-        self._writer = None
-        self._send_queue_task.cancel()
-        await self._send_update_callback()
-        return
-
-    async def _run_send_queue(self):
-        while self._connected or self._connecting:
-            data = await self._send_queue.get()
-            try:
-                self._writer.write(data.encode("ascii"))
+    async def _send_command(self, command: str):
+        try:
+            _LOGGER.debug("Sending command %s", command)
+            self._received_response.clear()
+            if self._writer:
+                self._writer.write(command.encode("ascii"))
                 await self._writer.drain()
-                _LOGGER.debug("Sent command %s", data)
-            except Exception as exc:  # pylint: disable=broad-except
-                _LOGGER.error("Exception: %s", exc)
-                return
+                try:
+                    await asyncio.wait_for(
+                        self._received_response.wait(),
+                        timeout=5.0,
+                    )
+                except asyncio.TimeoutError:
+                    print("oops took longer than 5s!")
+        except OSError as exc:
+            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
+
+    async def _send_keepalive(self):
+        try:
+            while True:
+                await asyncio.sleep(240)
+                _LOGGER.debug("sending keepalive to {self._device_type}")
+                device_id = str(next(iter(self._devices)))
+                message = (
+                    f'{{"command":"get","data":{{"deviceId":{device_id},"uid":10}}}}'
+                )
+                await self._send_command(message)
+        except asyncio.CancelledError:
+            _LOGGER.debug("Cancelled the keepalive task")
+
+    async def _data_received(self):
+        try:
+            while self._reader:
+                raw_data = await self._reader.readuntil(b"}}")
+                if not raw_data:
+                    break
+                data = raw_data.decode("ascii")
+                _LOGGER.debug("Received: %s", data)
+                await self._parse_response(data)
+
+                if not self._received_response.is_set():
+                    _LOGGER.debug("Resolving set_value's await")
+                    self._received_response.set()
+        except IncompleteReadError:
+            _LOGGER.info(
+                "pyIntesisHome lost connection to the %s server.", self._device_type
+            )
+        except asyncio.CancelledError:
+            pass
+        except (
+            TimeoutError,
+            ConnectionResetError,
+            OSError,
+        ) as exc:
+            _LOGGER.error(
+                "pyIntesisHome lost connection to the %s server. Exception: %s",
+                self._device_type,
+                exc,
+            )
+        finally:
+            self._connected = False
+            self._connecting = False
+            self._auth_token = None
+            await self._send_update_callback()
 
     async def connect(self):
         """Public method for connecting to IntesisHome/Airconwithme API"""
@@ -133,75 +141,44 @@ class IntesisHome(IntesisBase):
             self._connecting = True
             self._connection_retries = 0
 
-            # Get authentication token over HTTP POST
-            while not self._auth_token:
-                if self._connection_retries:
-                    _LOGGER.debug(
-                        "Couldn't get API details, retrying in %i minutes",
-                        self._connection_retries,
-                    )
-                    await asyncio.sleep(self._connection_retries * 60)
+            self._devices = {}
+            if self._receive_task:
+                self._receive_task.cancel()
                 try:
-                    self._auth_token = await self.poll_status()
-                except IHConnectionError as ex:
-                    _LOGGER.error(
-                        "Error connecting to the %s server: %s", self._device_type, ex
-                    )
-                self._connection_retries += 1
+                    await self._receive_task
+                except asyncio.CancelledError:
+                    _LOGGER.debug("Receive task cancelled")
 
-                _LOGGER.debug(
-                    "Opening connection to %s API at %s:%i",
-                    self._device_type,
-                    self._cmd_server,
-                    self._cmd_server_port,
-                )
-
+            _LOGGER.debug(
+                "Opening connection to %s API at %s:%i",
+                self._device_type,
+                self._cmd_server,
+                self._cmd_server_port,
+            )
             try:
                 # Create asyncio socket
                 self._reader, self._writer = await asyncio.open_connection(
                     self._cmd_server, self._cmd_server_port
                 )
 
-                # Set socket timeout
-                if self._reader._transport._sock:  # pylint: disable=protected-access
-                    self._reader._transport._sock.settimeout(  # pylint: disable=protected-access
-                        60
-                    )
-                    try:
-                        self._reader._transport._sock.setsockopt(  # pylint: disable=protected-access
-                            socket.IPPROTO_TCP, socket.TCP_USER_TIMEOUT, 60 * 1000
-                        )
-                        self._reader._transport._sock.setsockopt(  # pylint: disable=protected-access
-                            socket.IPPROTO_TCP, socket.SO_KEEPALIVE, 60 * 1000
-                        )
-                    except Exception:  # pylint: disable=broad-except
-                        _LOGGER.debug(
-                            "Exception setting TCP_USER_TIMEOUT or SO_KEEPALIVE,"
-                            "you can probably ignore this"
-                        )
-
                 # Authenticate
                 auth_msg = '{"command":"connect_req","data":{"token":%s}}' % (
-                    self._auth_token
+                    await self.poll_status()
                 )
+                await self._send_command(auth_msg)
                 # Clear the OTP
                 self._auth_token = None
-                self._writer.write(auth_msg.encode("ascii"))
-                await self._writer.drain()
-                _LOGGER.debug("Data sent: %s", auth_msg)
-                _LOGGER.debug(
-                    "Socket timeout is %s",
-                    self._reader._transport._sock.gettimeout(),  # pylint: disable=protected-access
-                )
-
-                self._event_loop.create_task(self._handle_packets())
+                self._receive_task = self._event_loop.create_task(self._data_received())
                 self._keepalive_task = self._event_loop.create_task(
                     self._send_keepalive()
                 )
-                self._send_queue_task = self._event_loop.create_task(
-                    self._run_send_queue()
-                )
-
+            # Get authentication token over HTTP POST
+            except IHAuthenticationError as exc:
+                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                raise IHAuthenticationError from exc
+            except IHConnectionError as exc:
+                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                raise IHConnectionError from exc
             except (  # pylint: disable=broad-except
                 ConnectionRefusedError,
                 Exception,
@@ -212,21 +189,8 @@ class IntesisHome(IntesisBase):
                     self._cmd_server_port,
                     exc,
                 )
-                self._connected = False
-                self._connecting = False
-                await self._send_update_callback()
-
-    async def stop(self):
-        """Public method for shutting down connectivity with the envisalink."""
-        self._connected = False
-        if self._writer:
-            self._writer._transport.close()  # pylint: disable=protected-access
-
-        if self._reader:
-            self._reader._transport.close()  # pylint: disable=protected-access
-
-        if self._own_session:
-            await self._web_session.close()
+            self._connected = False
+            self._connecting = False
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device.
@@ -305,7 +269,7 @@ class IntesisHome(IntesisBase):
             '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}'
             % (device_id, uid, value)
         )
-        self._send_queue.put_nowait(message)
+        await self._send_command(message)
 
     def _get_fan_map(self, device_id):
         return self.get_device_property(device_id, "config_fan_map")

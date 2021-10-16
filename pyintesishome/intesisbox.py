@@ -1,4 +1,4 @@
-""" Main submodule for pyintesishome """
+"""IntesisBox class."""
 import asyncio
 import logging
 from asyncio.exceptions import IncompleteReadError
@@ -27,11 +27,12 @@ _LOGGER = logging.getLogger("pyintesishome")
 
 
 class IntesisBox(IntesisBase):
-    """pyintesishome local class"""
+    """IntesisBox local class."""
 
     INTESIS_MAP = INTESISBOX_MAP
 
     def __init__(self, host, loop=None):
+        """Initialize IntesisBox controller."""
         super().__init__(host=host, loop=loop, device_type=DEVICE_INTESISBOX)
         self._scan_interval = 60
         self._device_id: str = ""
@@ -47,6 +48,7 @@ class IntesisBox(IntesisBase):
         self._received_response: asyncio.Event = asyncio.Event()
 
     async def connect(self):
+        """Public method for making the controller connect."""
         if self._connected:
             _LOGGER.debug("Already connected")
             return
@@ -68,9 +70,9 @@ class IntesisBox(IntesisBase):
             await asyncio.wait_for(self._initialise_connection(), timeout=60.0)
             await self._send_update_callback()
 
-        except OSError as e:  # pylint: disable=broad-except
+        except OSError as exc:  # pylint: disable=broad-except
             _LOGGER.debug("Exception opening connection")
-            _LOGGER.error("%s Exception. %s / %s", type(e), repr(e.args), e)
+            _LOGGER.error("%s Exception. %s / %s", type(exc), repr(exc.args), exc)
 
     async def _initialise_connection(self):
         """Requests the current state of the device"""
@@ -89,13 +91,14 @@ class IntesisBox(IntesisBase):
         self._connected = True
 
     async def parse_response(self, decoded_data):
-        linesReceived: List[str] = decoded_data.strip().splitlines()
-        for line in linesReceived:
-            cmdList = line.split(":", 1)
-            cmd = cmdList[0]
+        """Parses the API response and routes to the correct handler method."""
+        lines_received: List[str] = decoded_data.strip().splitlines()
+        for line in lines_received:
+            cmdlist = line.split(":", 1)
+            cmd = cmdlist[0]
             if cmd in ["CHN,1", "ID", "LIMITS", "ACK", "ERR"]:
-                if len(cmdList) > 1:
-                    args = cmdList[1]
+                if len(cmdlist) > 1:
+                    args = cmdlist[1]
                     if cmd == "ID":
                         self._parse_id_received(args)
                     elif cmd == "CHN,1":
@@ -113,13 +116,15 @@ class IntesisBox(IntesisBase):
                 if not raw_data:
                     break
                 data = raw_data.decode("ascii")
-                _LOGGER.debug(f"Received {data!r}")
+                _LOGGER.debug("Received: %s", data)
                 await self.parse_response(data)
 
         except IncompleteReadError:
-            _LOGGER.info(
+            _LOGGER.error(
                 "pyIntesisHome lost connection to the %s server.", self._device_type
             )
+        except asyncio.CancelledError:
+            pass
         except (
             TimeoutError,
             ConnectionResetError,
@@ -158,8 +163,8 @@ class IntesisBox(IntesisBase):
 
     async def _send_command(self, command: str):
         try:
-            _LOGGER.debug(f"Sending command '{command}'")
             self._received_response.clear()
+            _LOGGER.debug("Sending command %s", command)
             self._writer.write(command.encode("ascii"))
             await self._writer.drain()
             try:
@@ -169,8 +174,8 @@ class IntesisBox(IntesisBase):
                 )
             except asyncio.TimeoutError:
                 print("oops took longer than 5s!")
-        except Exception as e:
-            _LOGGER.error("%s Exception. %s / %s", type(e), e.args, e)
+        except OSError as exc:
+            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
 
     def _parse_change_received(self, args):
         function, value = args.split(",")
@@ -216,9 +221,12 @@ class IntesisBox(IntesisBase):
 
     async def _send_keepalive(self):
         """Run a loop that updates the values every _scan_interval."""
-        while True:
-            await asyncio.sleep(30)
-            await self._send_command("GET,1:AMBTEMP")
+        try:
+            while True:
+                await asyncio.sleep(30)
+                await self._send_command("GET,1:AMBTEMP")
+        except asyncio.CancelledError:
+            _LOGGER.debug("Cancelled the keepalive task")
 
     async def _authenticate(self) -> bool:
         """Authenticate using username and password."""
@@ -254,24 +262,10 @@ class IntesisBox(IntesisBase):
         """Public method to set the horizontal vane"""
         await self._set_value(device_id, INTESISBOX_CMD_VANELR, vane)
 
-    async def stop(self):
-        """Disconnect and stop periodic updater."""
-        _LOGGER.debug("Stopping receive task.")
-        if self._receive_task:
-            self._receive_task.cancel()
-            try:
-                await self._receive_task
-            except asyncio.CancelledError:
-                _LOGGER.debug("Receive task cancelled")
-
     async def poll_status(self, sendcallback=False):
         if self._connected:
             _LOGGER.debug("Polling status")
-            try:
-                self._writer.write(INTESISBOX_CMD_GET_AVAIL_DP.encode("ascii"))
-                await self._writer.drain()
-            except Exception as e:
-                _LOGGER.error("%s Exception. %s / %s", type(e), e.args, e)
+            await self._send_command(INTESISBOX_CMD_GET_AVAIL_DP)
 
     def get_mode_list(self, device_id) -> list:
         """Get possible entity modes."""

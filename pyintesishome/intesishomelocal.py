@@ -1,12 +1,13 @@
-from pyintesishome.intesisbase import IntesisBase
-
 """ Main submodule for pyintesishome """
+
 import asyncio
 import logging
 
+from pyintesishome import IntesisBase
+
 from .const import (
     COMMAND_MAP,
-    DEVICE_INTESISHOME,
+    DEVICE_INTESISHOME_LOCAL,
     INTESIS_MAP,
     LOCAL_CMD_GET_AVAIL_DP,
     LOCAL_CMD_GET_DP_VALUE,
@@ -29,7 +30,7 @@ class IntesisHomeLocal(IntesisBase):
         password,
         loop=None,
         websession=None,
-        device_type=DEVICE_INTESISHOME,
+        device_type=DEVICE_INTESISHOME_LOCAL,
     ):
         self._session_id: str = ""
         self._datapoints: dict = {}

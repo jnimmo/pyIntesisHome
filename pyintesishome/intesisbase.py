@@ -1,4 +1,4 @@
-""" Main submodule for pyintesishome """
+"""Base class for Intesis controllers."""
 import asyncio
 import logging
 from asyncio.streams import StreamReader, StreamWriter
@@ -21,7 +21,7 @@ _LOGGER = logging.getLogger("pyintesishome")
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
 class IntesisBase:
-    """pyintesishome base class"""
+    """Base class for Intesis controllers."""
 
     def __init__(
         self,
@@ -32,6 +32,7 @@ class IntesisBase:
         websession=None,
         device_type=DEVICE_INTESISHOME,
     ):
+        """Initialize IntesisBox controller."""
         # Select correct API for device type
         self._username = username
         self._password = password
@@ -42,6 +43,8 @@ class IntesisBase:
         self._connecting = False
         self._connection_retries = 0
         self._update_callbacks = []
+        self._keepalive_task: asyncio.Task = None
+        self._receive_task: asyncio.Task = None
         self._error_message = None
         self._web_session = websession
         self._own_session = False
@@ -63,11 +66,11 @@ class IntesisBase:
             self._own_session = True
 
     async def _set_value(self, device_id, uid, value):
-        """Internal method to send a command to the API (and connect if necessary)"""
+        """Internal method to send a value to the device."""
         raise NotImplementedError()
 
     def _update_device_state(self, device_id, uid, value):
-        """Internal method to update the state table of IntesisHome/Airconwithme devices"""
+        """Internal method to update the state table of IntesisHome/Airconwithme devices."""
         device_id = str(device_id)
 
         if uid in INTESIS_MAP:
@@ -92,16 +95,31 @@ class IntesisBase:
         if rssi and str(device_id) in self._devices:
             self._devices[str(device_id)]["rssi"] = rssi
 
-    async def _send_command(self, command: str):
-        raise NotImplementedError()
-
     async def connect(self):
         """Public method for connecting to API"""
         raise NotImplementedError()
 
     async def stop(self):
         """Public method for shutting down connectivity."""
-        raise NotImplementedError()
+        self._connected = False
+        if self._receive_task:
+            self._receive_task.cancel()
+            try:
+                await self._receive_task
+            except asyncio.CancelledError:
+                pass
+        if self._keepalive_task:
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
+            except asyncio.CancelledError:
+                _LOGGER.debug("Keepalive task cancelled")
+        if self._writer:
+            self._writer.close()
+            await self._writer.wait_closed()
+
+        if self._own_session:
+            await self._web_session.close()
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device.
@@ -438,7 +456,7 @@ class IntesisBase:
         return self._device_type
 
     @property
-    def id(self) -> str:
+    def controller_id(self) -> str:
         """Returns an account/device identifier - Serial, MAC or username."""
         if self._controller_id:
             return self._controller_id.lower()
