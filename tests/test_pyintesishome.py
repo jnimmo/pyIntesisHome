@@ -5,7 +5,7 @@ import aiohttp
 import pytest
 
 from pyintesishome import IntesisHome, IntesisHomeLocal
-from pyintesishome.const import API_URL, DEVICE_INTESISHOME, DEVICE_INTESISHOME_LOCAL
+from pyintesishome.const import API_URL, DEVICE_INTESISHOME
 
 from . import mock_aioresponse  # noqa: F401
 from . import (
@@ -15,6 +15,7 @@ from . import (
     MOCK_USER,
     MOCK_VAL_RUN_HOURS,
     cloud_api_callback,
+    intesisbox_api_callback,
     local_api_callback,
 )
 
@@ -30,9 +31,15 @@ async def async_setup_controllers():
         MOCK_HOST,
         MOCK_USER,
         MOCK_PASS,
+        loop=loop,
         websession=session,
-        device_type=DEVICE_INTESISHOME_LOCAL,
     )
+
+    # controllers["intesisbox"] = IntesisBox(
+    #     MOCK_HOST,
+    #     loop=loop,
+    #     websession=session,
+    # )
 
     controllers["cloud"] = IntesisHome(
         MOCK_USER,
@@ -58,6 +65,12 @@ class TestPyIntesisHome:
         mock_aioresponse.post(
             f"{API_URL[DEVICE_INTESISHOME]}",
             callback=cloud_api_callback,
+            repeat=True,
+        )
+
+        mock_aioresponse.post(
+            MOCK_HOST,
+            callback=intesisbox_api_callback,
             repeat=True,
         )
 

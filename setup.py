@@ -3,7 +3,7 @@ from setuptools import setup
 
 setup(
     name="pyintesishome",
-    version="1.8.0",
+    version="1.8.1",
     description="A python3 library for running asynchronus communications with IntesisHome Smart AC Controllers",
     url="https://github.com/jnimmo/pyIntesisHome",
     author="James Nimmo",

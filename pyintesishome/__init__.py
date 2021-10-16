@@ -1,3 +1,6 @@
 """ pyintesishome Module """
 from .exceptions import IHAuthenticationError, IHConnectionError
-from .pyintesishome import IntesisHome, IntesisHomeLocal
+from .intesisbase import IntesisBase
+from .intesisbox import IntesisBox
+from .intesishome import IntesisHome
+from .intesishomelocal import IntesisHomeLocal

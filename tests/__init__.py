@@ -29,6 +29,10 @@ def mock_aioresponse():
         yield m
 
 
+def intesisbox_api_callback(url, **kwargs):
+    raise NotImplementedError()
+
+
 def local_api_callback(url, **kwargs):
     req_json = kwargs.pop("json")
     req_cmd = req_json["command"]
@@ -293,7 +297,7 @@ def cloud_api_callback(url, **kwargs):
             "lastAppVersion": "1.8.1",
             "forceUpdate": 0,
             "setDelay": 0.7,
-            "serverIP": "212.92.35.33",
+            "serverIP": "1.2.3.4",
             "serverPort": 8210,
             "hash": "ea4b71bd4e8ba5ad045e6bbbb4118d2816efbcb5",
             "inst": [
