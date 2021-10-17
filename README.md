@@ -1,10 +1,11 @@
 # pyIntesisHome
-This project is a python3 library for interfacing with the IntesisHome and airconwithme AC controllers.
+This project is a python3 library for interfacing with Intesis air conditioning controllers, including cloud control of IntesisHome (Airconwithme + anywAiR) and local control of IntesisBox devices.
 It is fully asynchronous using the aiohttp library, and utilises the private API used by the IntesisHome mobile apps.
 
 ### Home Assistant
 To use with [Home Assistant](https://www.home-assistant.io/integrations/intesishome/), add the following to your configuration.yaml 
 
+#### IntesisHome configuration example
 ```yaml
 climate:
   - platform: intesishome
@@ -12,7 +13,14 @@ climate:
     password: YOUR_PASSWORD
 ```
 
-For IntesisBox support, see [hass-intesisbox](https://github.com/jnimmo/hass-intesisbox) for an initial release.
+#### IntesisBox configuration example
+```yaml
+climate:
+  - platform: intesishome
+    device: IntesisBox
+    host: 192.168.1.50
+```
+
 
 ## Library usage
  - Instantiate the IntesisHome controller device with username and password for the user.intesishome.com website.
