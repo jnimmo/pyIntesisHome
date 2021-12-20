@@ -10,6 +10,7 @@ from .const import (
     COMMAND_MAP,
     CONFIG_MODE_BITS,
     DEVICE_INTESISHOME,
+    DEVICE_INTESISHOME_LOCAL,
     ERROR_MAP,
     INTESIS_MAP,
     INTESIS_NULL,
@@ -408,7 +409,10 @@ class IntesisBase:
         """Public method returns the current temperature."""
         outdoor_temp = self.get_device_property(device_id, "outdoor_temp")
         if outdoor_temp:
-            outdoor_temp = twos_complement_16bit(int(outdoor_temp)) / 10
+            if self.device_type == DEVICE_INTESISHOME_LOCAL:
+                outdoor_temp = int(outdoor_temp) / 10
+            else:
+                outdoor_temp = twos_complement_16bit(int(outdoor_temp)) / 10
         return outdoor_temp
 
     def get_max_setpoint(self, device_id) -> float:
