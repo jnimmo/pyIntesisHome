@@ -24,7 +24,7 @@ class IntesisHomeLocal(IntesisBase):
     """pyintesishome local class"""
 
     def __init__(self, host, username, password, loop=None, websession=None):
-        device_type = (DEVICE_INTESISHOME_LOCAL,)
+        device_type = DEVICE_INTESISHOME_LOCAL
         self._session_id: str = ""
         self._datapoints: dict = {}
         self._scan_interval = 5
