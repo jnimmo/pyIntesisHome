@@ -202,6 +202,7 @@ INTESIS_MAP = {
     185: {"name": "uid_185"},
     186: {"name": "uid_186"},
     191: {"name": "uid_binary_input_sleep_mode"},
+    192: {"name": "error_address"},
     50000: {
         "name": "external_led",
         "values": {0: "off", 1: "on", 2: "blinking only on change"},
