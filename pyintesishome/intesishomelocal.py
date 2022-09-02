@@ -1,7 +1,8 @@
-""" Main submodule for pyintesishome """
+"""Main submodule for pyintesishome."""
 
 import asyncio
 import logging
+from http.client import HTTPException
 
 from .const import (
     COMMAND_MAP,
@@ -21,7 +22,7 @@ _LOGGER = logging.getLogger("pyintesishome")
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
 class IntesisHomeLocal(IntesisBase):
-    """pyintesishome local class"""
+    """pyintesishome local class."""
 
     def __init__(self, host, username, password, loop=None, websession=None):
         device_type = DEVICE_INTESISHOME_LOCAL
@@ -43,19 +44,34 @@ class IntesisHomeLocal(IntesisBase):
 
     async def _request_values(self) -> dict:
         """Get all entity values."""
-        response = await self._request(LOCAL_CMD_GET_DP_VALUE, uid="all")
-        self._values = {dpval["uid"]: dpval["value"] for dpval in response["dpval"]}
-        return self._values
+        response = {}
+        try:
+            response = await self._request(LOCAL_CMD_GET_DP_VALUE, uid="all")
+        except (IHConnectionError, IHAuthenticationError) as exc:
+            _LOGGER.error(
+                "IntesisHome connection error: %s",
+                exc,
+            )
+
+        if response and "dpval" in response:
+            self._values = {dpval["uid"]: dpval["value"] for dpval in response["dpval"]}
+            return self._values
+        return {}
 
     async def _run_updater(self):
         """Run a loop that updates the values every _scan_interval."""
-        while True:
-            values = await self._request_values()
-            for uid, value in values.items():
-                self._update_device_state(self._device_id, uid, value)
+        try:
+            while True:
+                values = await self._request_values()
+                for uid, value in values.items():
+                    self._update_device_state(self._device_id, uid, value)
 
-            await self._send_update_callback(self._device_id)
-            await asyncio.sleep(self._scan_interval)
+                await self._send_update_callback(self._device_id)
+                await asyncio.sleep(self._scan_interval)
+        except asyncio.CancelledError:
+            _LOGGER.debug("Cancelled the updater task")
+        except HTTPException as exc:
+            _LOGGER.error("Error during updater task: %s", exc)
 
     async def _authenticate(self) -> bool:
         """Authenticate using username and password."""

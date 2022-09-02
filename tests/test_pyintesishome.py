@@ -20,12 +20,12 @@ from . import (
 )
 
 controllers = {}
-loop = asyncio.get_event_loop()
 
 
 async def async_setup_controllers():
     # The aiohttp.ClientSession should be created within an async function
     session = aiohttp.ClientSession()
+    loop = asyncio.get_event_loop()
 
     controllers["local"] = IntesisHomeLocal(
         MOCK_HOST,
@@ -45,11 +45,12 @@ async def async_setup_controllers():
         MOCK_USER,
         MOCK_PASS,
         loop=loop,
+        websession=session,
         device_type=DEVICE_INTESISHOME,
     )
 
 
-loop.run_until_complete(async_setup_controllers())
+asyncio.run(async_setup_controllers())
 
 
 @pytest.mark.parametrize("controller", controllers.values(), ids=controllers.keys())

@@ -1,5 +1,24 @@
+# linters such as flake8 and pylint should be pinned, as new releases
+# make new things fail. Manually update these pins when pulling in a
+# new version
+
+# types-* that have versions roughly corresponding to the packages they
+# contain hints for available should be kept in sync with them
+
+codecov==2.1.12
+mock-open==1.4.0
+mypy==0.971
+pre-commit==2.20.0
+pylint==2.15.0
+pipdeptree==2.2.1
+pytest-aiohttp==0.3.0
+pytest-cov==3.0.0
+pytest-github-actions-annotate-failures==0.1.7
+pytest-test-groups==1.0.3
+pytest-sugar==0.9.5
+pytest-timeout==2.1.0
+pytest-xdist==2.5.0
+pytest==7.1.2
+requests_mock==1.9.2
+respx==0.19.2
 aioresponses
-pytest
-pytest-aiohttp
-pytest-cov
-pytest-github-actions-annotate-failures
