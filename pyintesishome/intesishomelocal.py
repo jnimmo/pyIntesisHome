@@ -2,7 +2,8 @@
 
 import asyncio
 import logging
-from http.client import HTTPException
+
+import aiohttp
 
 from .const import (
     COMMAND_MAP,
@@ -25,10 +26,11 @@ class IntesisHomeLocal(IntesisBase):
     """pyintesishome local class."""
 
     def __init__(self, host, username, password, loop=None, websession=None):
+        """Constructor"""
         device_type = DEVICE_INTESISHOME_LOCAL
         self._session_id: str = ""
         self._datapoints: dict = {}
-        self._scan_interval = 5
+        self._scan_interval = 6
         self._device_id: str = ""
         self._values: dict = {}
         self._info: dict = {}
@@ -61,54 +63,79 @@ class IntesisHomeLocal(IntesisBase):
     async def _run_updater(self):
         """Run a loop that updates the values every _scan_interval."""
         try:
-            while True:
-                values = await self._request_values()
-                for uid, value in values.items():
-                    self._update_device_state(self._device_id, uid, value)
+            while self._connected:
+                try:
+                    values = await self._request_values()
+                    for uid, value in values.items():
+                        self._update_device_state(self._device_id, uid, value)
 
-                await self._send_update_callback(self._device_id)
+                    await self._send_update_callback(self._device_id)
+                except (IHConnectionError) as exc:
+                    _LOGGER.error("Error during updater task: %s", exc)
                 await asyncio.sleep(self._scan_interval)
         except asyncio.CancelledError:
             _LOGGER.debug("Cancelled the updater task")
-        except HTTPException as exc:
-            _LOGGER.error("Error during updater task: %s", exc)
+        _LOGGER.debug("Updater task is exiting")
 
     async def _authenticate(self) -> bool:
         """Authenticate using username and password."""
-        response = await self._request(
-            LOCAL_CMD_LOGIN, username=self._username, password=self._password
-        )
-        self._session_id = response["id"].get("sessionID")
-
-    async def _request(self, command: str, **kwargs) -> dict:
-        """Make a request."""
         payload = {
-            "command": command,
-            "data": {"sessionID": self._session_id, **kwargs},
+            "command": LOCAL_CMD_LOGIN,
+            "data": {"username": self._username, "password": self._password},
         }
-
         async with self._web_session.post(
             f"http://{self._host}/api.cgi", json=payload
         ) as response:
             if response.status != 200:
                 raise IHConnectionError("HTTP response status is unexpected (not 200)")
-
             json_response = await response.json()
+            self._session_id = json_response["data"].get("id").get("sessionID")
+            _LOGGER.debug("Authenticated with new session ID %s", self._session_id)
 
-        if not json_response["success"]:
-            if json_response["error"]["code"] in [1, 5]:
-                if self._connection_retries:
-                    raise IHAuthenticationError(json_response["error"]["message"])
+    async def _request(self, command: str, **kwargs) -> dict:
+        """Make a request."""
+        connection_attempts = 0
 
-                # Try to reauthenticate once
-                _LOGGER.debug("Request failed. Trying to reauthenticate.")
-                self._connection_retries += 1
+        while connection_attempts < 2:
+            connection_attempts += 1
+            if not self._session_id:
                 await self._authenticate()
-                return await self._request(command, **kwargs)
-            raise IHConnectionError(json_response["error"]["message"])
 
-        self._connection_retries = 0
-        return json_response.get("data")
+            payload = {
+                "command": command,
+                "data": {"sessionID": self._session_id, **kwargs},
+            }
+            _LOGGER.debug("Sending intesishome_local command %s", command)
+            timeout = aiohttp.ClientTimeout(total=10)
+            json_response = {}
+            try:
+                async with self._web_session.post(
+                    f"http://{self._host}/api.cgi",
+                    json=payload,
+                    timeout=timeout,
+                ) as response:
+                    if response.status != 200:
+                        raise IHConnectionError(
+                            "HTTP response status is unexpected (not 200)"
+                        )
+                    json_response = await response.json()
+            except asyncio.exceptions.TimeoutError as exc:
+                _LOGGER.error(
+                    "IntesisHome HTTP timeout error: %s",
+                    exc,
+                )
+            except (aiohttp.ClientError) as exc:
+                _LOGGER.error(
+                    "IntesisHome HTTP error: %s",
+                    exc,
+                )
+
+            if "success" in json_response:
+                return json_response.get("data")
+
+            if "error" in json_response and json_response["error"]["code"] in [1, 5]:
+                self._session_id = ""
+                _LOGGER.debug("Request failed. Clearing session key")
 
     async def _request_value(self, name: str) -> dict:
         """Get entity value by uid."""
@@ -147,10 +174,9 @@ class IntesisHomeLocal(IntesisBase):
         await self.poll_status()
         _LOGGER.debug("Successful authenticated and polled. Fetching Datapoints.")
         await self.get_datapoints()
-
+        self._connected = True
         _LOGGER.debug("Starting updater task.")
         self._update_task = asyncio.create_task(self._run_updater())
-        self._connected = True
 
     async def stop(self):
         """Disconnect and stop periodic updater."""
@@ -168,6 +194,7 @@ class IntesisHomeLocal(IntesisBase):
         return self._info
 
     async def poll_status(self, sendcallback=False):
+        """Get device info for setup purposes."""
         await self._authenticate()
         info = await self.get_info()
         self._device_id = info["sn"]
