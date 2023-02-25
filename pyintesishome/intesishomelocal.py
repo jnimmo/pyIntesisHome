@@ -105,7 +105,7 @@ class IntesisHomeLocal(IntesisBase):
                 "command": command,
                 "data": {"sessionID": self._session_id, **kwargs},
             }
-            _LOGGER.debug("Sending intesishome_local command %s", command)
+            _LOGGER.debug("Sending intesishome_local command %s to %s", command, self._host)
             timeout = aiohttp.ClientTimeout(total=10)
             json_response = {}
             try:
@@ -116,26 +116,56 @@ class IntesisHomeLocal(IntesisBase):
                 ) as response:
                     if response.status != 200:
                         raise IHConnectionError(
-                            "HTTP response status is unexpected (not 200)"
+                            "HTTP response status is unexpected for %s (got %s, want 200)",
+                            self._host,
+                            response.status,
                         )
                     json_response = await response.json()
             except asyncio.exceptions.TimeoutError as exc:
                 _LOGGER.error(
-                    "IntesisHome HTTP timeout error: %s",
+                    "IntesisHome HTTP timeout error for %s: %s",
+                    self._host,
                     exc,
                 )
             except (aiohttp.ClientError) as exc:
                 _LOGGER.error(
-                    "IntesisHome HTTP error: %s",
+                    "IntesisHome HTTP error for %s: %s",
+                    self._host,
                     exc,
                 )
 
-            if "success" in json_response:
+            # If the response has a non-false "success", return the data.
+            #
+            # If the key doesn't exist, treat it as "false" and continue with
+            # error handling.
+            #
+            # If the error code is one we know requires re-authentication,
+            # clear the session key so we re-authenticate on the next attempt,
+            # otherwise just log the code and error message.
+            #
+            # If there's neither a "success" or "error" key, something is very
+            # wonky, so log an error plus the entire response.
+            if json_response.get("success", False):
                 return json_response.get("data")
-
-            if "error" in json_response and json_response["error"]["code"] in [1, 5]:
-                self._session_id = ""
-                _LOGGER.debug("Request failed. Clearing session key")
+            elif "error" in json_response:
+                error = json_response["error"]
+                if error.get("code") in [1, 5]:
+                    self._session_id = ""
+                    _LOGGER.debug("Request failed for %s (code=%s, message=%r). Clearing session key to force re-authentication",
+                            self._host,
+                            error.get("code"),
+                            error.get("message"),
+                            )
+                else:
+                    _LOGGER.debug("Request failed for %s (code=%s, message=%r). Error not handled.",
+                            self._host,
+                            error.get("code"),
+                            error.get("message"),
+                            )
+            else:
+                _LOGGER.debug("Request failed for %s - no 'success' or 'error' keys. json_response=%r",
+                        self._host,
+                        json_response)
 
     async def _request_value(self, name: str) -> dict:
         """Get entity value by uid."""
