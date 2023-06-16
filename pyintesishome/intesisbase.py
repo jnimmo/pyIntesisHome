@@ -87,6 +87,7 @@ class IntesisBase:
                     )
                 except asyncio.TimeoutError:
                     print("oops took longer than 5s!")
+                    await self.stop();
         except OSError as exc:
             _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
 
