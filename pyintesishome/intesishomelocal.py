@@ -158,10 +158,10 @@ class IntesisHomeLocal(IntesisBase):
                             )
                 else:
                     _LOGGER.debug("Request failed for %s (code=%s, message=%r). Error not handled.",
-                            self._host,
-                            error.get("code"),
-                            error.get("message"),
-                            )
+                                  self._host,
+                                  error.get("code"),
+                                  error.get("message"),
+                                 )
             else:
                 _LOGGER.debug("Request failed for %s - no 'success' or 'error' keys. json_response=%r",
                         self._host,
