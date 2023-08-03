@@ -37,6 +37,7 @@ class IntesisHome(IntesisBase):
         self._cmd_server = None
         self._cmd_server_port = None
         self._auth_token = None
+        self._controller_id = username
 
     async def _parse_response(self, decoded_data):
         _LOGGER.debug("%s API Received: %s", self._device_type, decoded_data)
@@ -151,7 +152,7 @@ class IntesisHome(IntesisBase):
             ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)
-        except (aiohttp.client_exceptions.ClientConnectorError) as exc:
+        except aiohttp.client_exceptions.ClientConnectorError as exc:
             raise IHConnectionError from exc
         except (aiohttp.client_exceptions.ClientError, socket.gaierror) as exc:
             self._error_message = f"Error connecting to {self._device_type} API: {exc}"

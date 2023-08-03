@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from json import JSONDecodeError
 
 import aiohttp
 
@@ -25,7 +26,7 @@ _LOGGER = logging.getLogger("pyintesishome")
 class IntesisHomeLocal(IntesisBase):
     """pyintesishome local class."""
 
-    def __init__(self, host, username, password, loop=None, websession=None):
+    def __init__(self, host, username, password, loop=None, websession=None) -> None:
         """Constructor"""
         device_type = DEVICE_INTESISHOME_LOCAL
         self._session_id: str = ""
@@ -70,7 +71,7 @@ class IntesisHomeLocal(IntesisBase):
                         self._update_device_state(self._device_id, uid, value)
 
                     await self._send_update_callback(self._device_id)
-                except (IHConnectionError) as exc:
+                except IHConnectionError as exc:
                     _LOGGER.error("Error during updater task: %s", exc)
                 await asyncio.sleep(self._scan_interval)
         except asyncio.CancelledError:
@@ -83,14 +84,35 @@ class IntesisHomeLocal(IntesisBase):
             "command": LOCAL_CMD_LOGIN,
             "data": {"username": self._username, "password": self._password},
         }
-        async with self._web_session.post(
-            f"http://{self._host}/api.cgi", json=payload
-        ) as response:
-            if response.status != 200:
-                raise IHConnectionError("HTTP response status is unexpected (not 200)")
-            json_response = await response.json()
-            self._session_id = json_response["data"].get("id").get("sessionID")
-            _LOGGER.debug("Authenticated with new session ID %s", self._session_id)
+        try:
+            async with self._web_session.post(
+                f"http://{self._host}/api.cgi", json=payload
+            ) as response:
+                if response.status != 200:
+                    raise IHConnectionError(
+                        "HTTP response status is unexpected (not 200)"
+                    )
+                json_response = await response.json()
+                # Check if the response has the expected format
+                if (
+                    "data" in json_response
+                    and "id" in json_response["data"]
+                    and "sessionID" in json_response["data"]["id"]
+                ):
+                    self._session_id = json_response["data"]["id"]["sessionID"]
+                    _LOGGER.debug(
+                        "Authenticated with new session ID %s", self._session_id
+                    )
+                else:
+                    _LOGGER.error("Unexpected response format during authentication")
+        except (
+            aiohttp.ClientConnectionError,
+            aiohttp.ClientResponseError,
+            aiohttp.ClientPayloadError,
+            aiohttp.ContentTypeError,
+            JSONDecodeError,
+        ) as exception:
+            _LOGGER.error("Error during authentication: %s", str(exception))
 
     async def _request(self, command: str, **kwargs) -> dict:
         """Make a request."""
@@ -105,7 +127,9 @@ class IntesisHomeLocal(IntesisBase):
                 "command": command,
                 "data": {"sessionID": self._session_id, **kwargs},
             }
-            _LOGGER.debug("Sending intesishome_local command %s to %s", command, self._host)
+            _LOGGER.debug(
+                "Sending intesishome_local command %s to %s", command, self._host
+            )
             timeout = aiohttp.ClientTimeout(total=10)
             json_response = {}
             try:
@@ -116,9 +140,8 @@ class IntesisHomeLocal(IntesisBase):
                 ) as response:
                     if response.status != 200:
                         raise IHConnectionError(
-                            "HTTP response status is unexpected for %s (got %s, want 200)",
-                            self._host,
-                            response.status,
+                            f"HTTP response status is unexpected for {self._host}"
+                            "(got {response.status}, want 200)"
                         )
                     json_response = await response.json()
             except asyncio.exceptions.TimeoutError as exc:
@@ -127,7 +150,7 @@ class IntesisHomeLocal(IntesisBase):
                     self._host,
                     exc,
                 )
-            except (aiohttp.ClientError) as exc:
+            except aiohttp.ClientError as exc:
                 _LOGGER.error(
                     "IntesisHome HTTP error for %s: %s",
                     self._host,
@@ -147,25 +170,30 @@ class IntesisHomeLocal(IntesisBase):
             # wonky, so log an error plus the entire response.
             if json_response.get("success", False):
                 return json_response.get("data")
-            elif "error" in json_response:
+            if "error" in json_response:
                 error = json_response["error"]
                 if error.get("code") in [1, 5]:
                     self._session_id = ""
-                    _LOGGER.debug("Request failed for %s (code=%s, message=%r). Clearing session key to force re-authentication",
-                            self._host,
-                            error.get("code"),
-                            error.get("message"),
-                            )
-                else:
-                    _LOGGER.debug("Request failed for %s (code=%s, message=%r). Error not handled.",
-                            self._host,
-                            error.get("code"),
-                            error.get("message"),
-                            )
-            else:
-                _LOGGER.debug("Request failed for %s - no 'success' or 'error' keys. json_response=%r",
+                    _LOGGER.debug(
+                        "Request failed for %s (code=%s, message=%r)."
+                        "Clearing session key to force re-authentication",
                         self._host,
-                        json_response)
+                        error.get("code"),
+                        error.get("message"),
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Request failed for %s (code=%s, message=%r). Error not handled",
+                        self._host,
+                        error.get("code"),
+                        error.get("message"),
+                    )
+            else:
+                _LOGGER.debug(
+                    "Request failed for %s - no 'success' or 'error' keys. json_response=%r",
+                    self._host,
+                    json_response,
+                )
 
     async def _request_value(self, name: str) -> dict:
         """Get entity value by uid."""
@@ -202,15 +230,15 @@ class IntesisHomeLocal(IntesisBase):
     async def connect(self):
         """Connect to the device and start periodic updater."""
         await self.poll_status()
-        _LOGGER.debug("Successful authenticated and polled. Fetching Datapoints.")
+        _LOGGER.debug("Successful authenticated and polled. Fetching Datapoints")
         await self.get_datapoints()
         self._connected = True
-        _LOGGER.debug("Starting updater task.")
+        _LOGGER.debug("Starting updater task")
         self._update_task = asyncio.create_task(self._run_updater())
 
     async def stop(self):
         """Disconnect and stop periodic updater."""
-        _LOGGER.debug("Stopping updater task.")
+        _LOGGER.debug("Stopping updater task")
         await self._cancel_task_if_exists(self._update_task)
         self._connected = False
 
@@ -225,25 +253,36 @@ class IntesisHomeLocal(IntesisBase):
 
     async def poll_status(self, sendcallback=False):
         """Get device info for setup purposes."""
-        await self._authenticate()
-        info = await self.get_info()
-        self._device_id = info["sn"]
-        self._controller_id = info["sn"].lower()
-        self._controller_name = f"{self._info['deviceModel']} ({info['ownSSID']})"
-        # Setup devices
-        self._devices[self._device_id] = {
-            "name": info["ownSSID"],
-            "widgets": [],
-            "model": info["deviceModel"],
-        }
+        try:
+            await self._authenticate()
+            info = await self.get_info()
 
-        await self.get_datapoints()
-        _LOGGER.debug(repr(self._devices))
+            # Extract device_id up to the first space, if there is a space
+            raw_id = info.get("sn")
+            if raw_id:
+                device_id, *_ = raw_id.split(" ")
+                self._device_id = device_id
+                self._controller_id = device_id.lower()
 
-        self._update_device_state(self._device_id, "acStatus", info["acStatus"])
+            self._controller_name = (
+                f"{self._info.get('deviceModel')} ({info.get('ownSSID')})"
+            )
+            # Setup devices
+            self._devices[self._device_id] = {
+                "name": info.get("ownSSID"),
+                "widgets": [],
+                "model": info.get("deviceModel"),
+            }
 
-        if sendcallback:
-            await self._send_update_callback(str(self._device_id))
+            await self.get_datapoints()
+            _LOGGER.debug(repr(self._devices))
+
+            self._update_device_state(self._device_id, "acStatus", info.get("acStatus"))
+
+            if sendcallback:
+                await self._send_update_callback(str(self._device_id))
+        except (IHConnectionError, KeyError) as exception:
+            _LOGGER.error("Error during polling status: %s", str(exception))
 
     def get_mode_list(self, device_id) -> list:
         """Get possible entity modes."""

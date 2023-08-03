@@ -174,7 +174,6 @@ def aquarea_to_domoticz(
 
 
 async def main(loop):
-
     username = "xxxxxx"
     password = "yyyyyyyyy"
     idd = "zzzzzzzz"
