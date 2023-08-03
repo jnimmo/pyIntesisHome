@@ -87,6 +87,8 @@ class IntesisBase:
                     )
                 except asyncio.TimeoutError:
                     print("oops took longer than 5s!")
+                    # need to close the connection as device not responding due to hung state
+                    self._writer.write.close()
         except OSError as exc:
             _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
 
