@@ -33,7 +33,7 @@ class IntesisBase:
         loop=None,
         websession=None,
         device_type=DEVICE_INTESISHOME,
-    ):
+    ) -> None:
         """Initialize IntesisBox controller."""
         # Select correct API for device type
         self._username = username
@@ -50,7 +50,7 @@ class IntesisBase:
         self._error_message = None
         self._web_session = websession
         self._own_session = False
-        self._controller_id = username
+        self._controller_id = None
         self._controller_name = username
         self._writer: StreamWriter = None
         self._reader: StreamReader = None
@@ -87,7 +87,7 @@ class IntesisBase:
                     )
                 except asyncio.TimeoutError:
                     print("oops took longer than 5s!")
-                    await self.stop();
+                    await self.stop()
         except OSError as exc:
             _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
 
@@ -105,8 +105,8 @@ class IntesisBase:
                     _LOGGER.debug("Resolving set_value's await")
                     self._received_response.set()
         except IncompleteReadError:
-            _LOGGER.info(
-                "pyIntesisHome lost connection to the %s server.", self._device_type
+            _LOGGER.debug(
+                "pyIntesisHome lost connection to the %s server", self._device_type
             )
         except asyncio.CancelledError:
             pass
@@ -116,7 +116,7 @@ class IntesisBase:
             OSError,
         ) as exc:
             _LOGGER.error(
-                "pyIntesisHome lost connection to the %s server. Exception: %s",
+                "PyIntesisHome lost connection to the %s server. Exception: %s",
                 self._device_type,
                 exc,
             )
@@ -518,7 +518,7 @@ class IntesisBase:
         """Returns an account/device identifier - Serial, MAC or username."""
         if self._controller_id:
             return self._controller_id.lower()
-        return None
+        raise ValueError("Controller ID has not been set yet")
 
     @property
     def name(self) -> str:

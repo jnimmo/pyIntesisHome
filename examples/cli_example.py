@@ -69,7 +69,6 @@ async def main(loop):
             device_type=args.device,
         )
     else:
-
         controller = IntesisHome(
             args.user,
             args.password,
