@@ -90,6 +90,9 @@ class IntesisBase:
                     await self.stop()
         except OSError as exc:
             _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
+        except Exception as exc:
+            _LOGGER.error("Unexpected error: %s", exc)
+            await self.stop()
 
     async def _data_received(self):
         try:
@@ -163,9 +166,11 @@ class IntesisBase:
         if self._writer:
             self._writer.close()
             await self._writer.wait_closed()
+            self._writer = None
 
-        if self._own_session:
+        if self._own_session and self._web_session:
             await self._web_session.close()
+            self._web_session = None
 
     @staticmethod
     async def _cancel_task_if_exists(task: asyncio.Task):

@@ -1,11 +1,14 @@
 # pyIntesisHome
+
 This project is a python3 library for interfacing with Intesis air conditioning controllers, including cloud control of IntesisHome (Airconwithme + anywAiR) and local control of IntesisBox devices.
 It is fully asynchronous using the aiohttp library, and utilises the private API used by the IntesisHome mobile apps.
 
 ### Home Assistant
-To use with [Home Assistant](https://www.home-assistant.io/integrations/intesishome/), add the following to your configuration.yaml 
+
+To use with [Home Assistant](https://www.home-assistant.io/integrations/intesishome/), add the following to your configuration.yaml
 
 #### IntesisHome configuration example
+
 ```yaml
 climate:
   - platform: intesishome
@@ -14,6 +17,7 @@ climate:
 ```
 
 #### IntesisBox configuration example
+
 ```yaml
 climate:
   - platform: intesishome
@@ -21,15 +25,16 @@ climate:
     host: 192.168.1.50
 ```
 
-
 ## Library usage
- - Instantiate the IntesisHome controller device with username and password for the user.intesishome.com website.
- - Status can be polled using the poll_status command suggested maximum of once every 5 minutes.
- - Commands are sent using a TCP connection to the API which will then remain open until the connection times out. 
- - While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required (check using *is_connected* property)
- - Callbacks to be notified of state updates can be added with the add_callback() method.
+
+- Instantiate the IntesisHome controller device with username and password for the user.intesishome.com website.
+- Status can be polled using the poll_status command suggested maximum of once every 5 minutes.
+- Commands are sent using a TCP connection to the API which will then remain open until the connection times out.
+- While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required (check using _is_connected_ property)
+- Callbacks to be notified of state updates can be added with the add_callback() method.
 
 ### Library basic example
+
 ```python
 import asyncio
 from pyintesishome import IntesisHome
@@ -51,15 +56,15 @@ if __name__ == "__main__":
     result = loop.run_until_complete(main(loop))
 
 ```
+
 ### Control methods
 
- - set_mode_heat(deviceID)
- - set_mode_cool(deviceID)
- - set_mode_fan(deviceID)
- - set_mode_dry(deviceID)
- - set_mode_auto(deviceID)
- - set_temperature(deviceID, temperature)
- - set_fan_speed(deviceID, 'quiet' | 'low' | 'medium' | 'high' | 'auto')
- - set_power_on(deviceID)
- - set_power_off(deviceID)
- 
+- set_mode_heat(deviceID)
+- set_mode_cool(deviceID)
+- set_mode_fan(deviceID)
+- set_mode_dry(deviceID)
+- set_mode_auto(deviceID)
+- set_temperature(deviceID, temperature)
+- set_fan_speed(deviceID, 'quiet' | 'low' | 'medium' | 'high' | 'auto')
+- set_power_on(deviceID)
+- set_power_off(deviceID)
