@@ -120,7 +120,7 @@ INTESIS_MAP = {
             7: {0: "auto", 1: "low", 2: "high"},
             14: {1: "low", 2: "medium", 3: "high"},
             15: {0: "auto", 1: "low", 2: "medium", 3: "high"},
-            30: {1: "quiet", 2: "low", 3: "medium", 4: "high"},
+            30: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high"},
             31: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high"},
             62: {1: "quiet", 2: "low", 3: "medium", 4: "high", 5: "max"},
             63: {0: "auto", 1: "quiet", 2: "low", 3: "medium", 4: "high", 5: "max"},
