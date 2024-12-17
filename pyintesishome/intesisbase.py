@@ -80,14 +80,14 @@ class IntesisBase:
             if self._writer:
                 self._writer.write(command.encode("ascii"))
                 await self._writer.drain()
-                try:
-                    await asyncio.wait_for(
-                        self._received_response.wait(),
-                        timeout=5.0,
-                    )
-                except asyncio.TimeoutError:
-                    print("oops took longer than 5s!")
-                    await self.stop()
+                timeout = 5.0
+                start_time = asyncio.get_event_loop().time()
+                while not self._received_response.is_set():
+                    if asyncio.get_event_loop().time() - start_time > timeout:
+                        _LOGGER.error("Timeout waiting for response")
+                        await self.stop()
+                        break
+                    await asyncio.sleep(0.1)
         except OSError as exc:
             _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
         except Exception as exc:
@@ -102,11 +102,14 @@ class IntesisBase:
                     break
                 data = raw_data.decode("ascii")
                 _LOGGER.debug("Received: %s", data)
-                await self._parse_response(data)
 
+                await self._parse_response(data)
+                
                 if not self._received_response.is_set():
                     _LOGGER.debug("Resolving set_value's await")
                     self._received_response.set()
+                    
+
         except IncompleteReadError:
             _LOGGER.debug(
                 "pyIntesisHome lost connection to the %s server", self._device_type

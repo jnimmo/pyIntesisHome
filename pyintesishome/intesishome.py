@@ -65,12 +65,18 @@ class IntesisHome(IntesisBase):
         elif resp["command"] == "rssi":
             # Wireless strength has changed
             self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
+        else:
+            _LOGGER.debug("Unexpected command received: %s", resp["command"])
+        # Ensure the _received_response event is set
+        if not self._received_response.is_set():
+            _LOGGER.debug("Setting _received_response event")
+            self._received_response.set()
         return
 
     async def _send_keepalive(self):
         try:
             while True:
-                await asyncio.sleep(240)
+                await asyncio.sleep(120)
                 _LOGGER.debug("sending keepalive to {self._device_type}")
                 device_id = str(next(iter(self._devices)))
                 message = (
