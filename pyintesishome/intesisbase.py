@@ -9,6 +9,7 @@ import aiohttp
 from .const import (
     COMMAND_MAP,
     CONFIG_MODE_BITS,
+    SWINGMODE_BITS,
     DEVICE_INTESISHOME,
     DEVICE_INTESISHOME_LOCAL,
     ERROR_MAP,
@@ -314,6 +315,36 @@ class IntesisBase:
                 mode_list.append(mode_bits.get(mode_bit))
 
         return mode_list
+    
+    def get_vertical_swing_list(self, device_id) -> list:
+        """Public method to return the list of device modes."""
+        swingmode_list = []
+
+        # By default, use config_mode_map to determine the available modes
+        config_vertical_vanes = self.get_device_property(device_id, "config_vertical_vanes")
+        swingmode_bits = SWINGMODE_BITS
+
+        # Generate the mode list from the map
+        for swingmode_bit in swingmode_bits:
+            if config_vertical_vanes & swingmode_bit:
+                swingmode_list.append(swingmode_bits.get(swingmode_bit))
+        
+        return swingmode_list
+    
+    def get_horizontal_swing_list(self, device_id) -> list:
+        """Public method to return the list of device modes."""
+        horizontal_swingmode_list = []
+
+        # By default, use config_mode_map to determine the available modes
+        config_horizontal_vanes = self.get_device_property(device_id, "config_horizontal_vanes")
+        horizontal_swingmode_bits = SWINGMODE_BITS
+
+        # Generate the mode list from the map
+        for horizontal_swingmode_bit in horizontal_swingmode_bits:
+            if config_horizontal_vanes & horizontal_swingmode_bit:
+                horizontal_swingmode_list.append(horizontal_swingmode_bits.get(horizontal_swingmode_bit))
+        
+        return horizontal_swingmode_list
 
     def get_fan_speed(self, device_id):
         """Public method returns the current fan speed."""
