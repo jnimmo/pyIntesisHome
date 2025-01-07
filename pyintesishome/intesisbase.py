@@ -452,6 +452,12 @@ class IntesisBase:
         """Public method returns the current horizontal vane setting."""
         swing = self.get_device_property(device_id, "hvane")
         return swing
+    
+    def get_model(self, device_id) -> str:
+        """Public method returns the device model."""
+        if "model" in self._devices[str(device_id)]:
+            return self._devices[str(device_id)]["model"]
+        return None
 
     def get_error(self, device_id) -> str:
         """Public method returns the current error code + description."""
