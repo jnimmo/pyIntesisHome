@@ -272,6 +272,7 @@ class IntesisHomeLocal(IntesisBase):
                 "name": info.get("ownSSID"),
                 "widgets": [],
                 "model": info.get("deviceModel"),
+                "fw_version": info.get("wlanFwVersion")
             }
 
             await self.get_datapoints()
