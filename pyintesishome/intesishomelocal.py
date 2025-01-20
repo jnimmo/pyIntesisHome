@@ -313,7 +313,7 @@ class IntesisHomeLocal(IntesisBase):
     
     def get_horizontal_swing_list(self, device_id) -> list:
         """Get possible entity modes."""
-        uid = COMMAND_MAP["vvane"]["uid"]
+        uid = COMMAND_MAP["hvane"]["uid"]
         return [
             INTESIS_MAP[uid]["values"][i]
             for i in self._datapoints[uid]["descr"]["states"]
