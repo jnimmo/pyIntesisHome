@@ -299,9 +299,25 @@ class IntesisHomeLocal(IntesisBase):
                 return values
         return INTESIS_MAP[67]["values"][63]
 
+    def get_vertical_swing_list(self, device_id) -> list:
+        """Get possible entity modes."""
+        uid = COMMAND_MAP["vvane"]["uid"]
+        return [
+            INTESIS_MAP[uid]["values"][i]
+            for i in self._datapoints[uid]["descr"]["states"]
+        ]
+
     def has_vertical_swing(self, device_id) -> bool:
         """Entity supports vertical swing."""
         return self._has_datapoint("vvane")
+    
+    def get_horizontal_swing_list(self, device_id) -> list:
+        """Get possible entity modes."""
+        uid = COMMAND_MAP["hvane"]["uid"]
+        return [
+            INTESIS_MAP[uid]["values"][i]
+            for i in self._datapoints[uid]["descr"]["states"]
+        ]
 
     def has_horizontal_swing(self, device_id) -> bool:
         """Entity supports horizontal swing."""
