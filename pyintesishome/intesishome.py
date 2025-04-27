@@ -138,7 +138,7 @@ class IntesisHome(IntesisBase):
                     self._cmd_server_port,
                     exc,
                 )
-            self._connected = False
+                self._connected = False
             self._connecting = False
 
     async def poll_status(self, sendcallback=False):
