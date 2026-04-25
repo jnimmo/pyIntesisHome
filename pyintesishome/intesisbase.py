@@ -10,20 +10,20 @@ import aiohttp
 from .const import (
     COMMAND_MAP,
     CONFIG_MODE_BITS,
-    SWINGMODE_BITS,
     DEVICE_INTESISHOME,
     DEVICE_INTESISHOME_LOCAL,
     ERROR_MAP,
     INTESIS_MAP,
     INTESIS_NULL,
     OPERATING_MODE_BITS,
+    SWINGMODE_BITS,
 )
 from .helpers import twos_complement_16bit, uint32
 
 _LOGGER = logging.getLogger("pyintesishome")
 
 
-# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
+# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-positional-arguments, too-many-public-methods
 class IntesisBase:
     """Base class for Intesis controllers."""
 
@@ -92,7 +92,7 @@ class IntesisBase:
                     await asyncio.sleep(0.1)
         except OSError as exc:
             _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
-        except Exception as exc:
+        except Exception as exc:  # pylint: disable=broad-exception-caught
             _LOGGER.error("Unexpected error: %s", exc)
             await self.stop()
 

@@ -14,7 +14,7 @@ from .intesisbase import IntesisBase
 _LOGGER = logging.getLogger("pyintesishome")
 
 
-# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-public-methods
+# pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-positional-arguments, too-many-public-methods
 class IntesisHome(IntesisBase):
     """pyintesishome cloud class"""
 
