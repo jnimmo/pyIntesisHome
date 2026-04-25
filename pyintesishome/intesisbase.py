@@ -9,6 +9,7 @@ import aiohttp
 from .const import (
     COMMAND_MAP,
     CONFIG_MODE_BITS,
+    SWINGMODE_BITS,
     DEVICE_INTESISHOME,
     DEVICE_INTESISHOME_LOCAL,
     ERROR_MAP,
@@ -314,6 +315,22 @@ class IntesisBase:
                 mode_list.append(mode_bits.get(mode_bit))
 
         return mode_list
+    
+    def get_vertical_swing_list(self, device_id) -> list:
+        """Public method to return the list of vertical swing modes."""
+        config_vertical_vanes = self.get_device_property(device_id, "config_vertical_vanes")
+        return [
+            mode for bit, mode in SWINGMODE_BITS.items()
+            if config_vertical_vanes is not None and config_vertical_vanes & bit
+        ]
+
+    def get_horizontal_swing_list(self, device_id) -> list:
+        """Public method to return the list of horizontal swing modes."""
+        config_horizontal_vanes = self.get_device_property(device_id, "config_horizontal_vanes")
+        return [
+            mode for bit, mode in SWINGMODE_BITS.items()
+            if config_horizontal_vanes is not None and config_horizontal_vanes & bit
+        ]
 
     def get_fan_speed(self, device_id):
         """Public method returns the current fan speed."""

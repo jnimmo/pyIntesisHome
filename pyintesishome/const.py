@@ -23,6 +23,19 @@ OPERATING_MODE_BITS = {
     32: "auto",
     64: "auto+tank",
 }
+SWINGMODE_BITS = {
+    1: "auto/stop",
+    2: "manual1",
+    4: "manual2",
+    8: "manual3",
+    16: "manual4",
+    32: "manual5",
+    64: "manual6",
+    128: "manual7",
+    256: "manual8",
+    512: "manual9",
+    1024: "swing"
+}
 
 INTESIS_MAP = {
     1: {"name": "power", "values": {0: "off", 1: "on"}},
