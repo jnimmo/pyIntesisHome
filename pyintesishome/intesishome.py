@@ -77,7 +77,7 @@ class IntesisHome(IntesisBase):
         try:
             while True:
                 await asyncio.sleep(120)
-                _LOGGER.debug("sending keepalive to {self._device_type}")
+                _LOGGER.debug("sending keepalive to %s", self._device_type)
                 device_id = str(next(iter(self._devices)))
                 message = (
                     f'{{"command":"get","data":{{"deviceId":{device_id},"uid":10}}}}'
@@ -185,7 +185,7 @@ class IntesisHome(IntesisBase):
                 )
 
             # Setup devices
-            for installation in config.get("inst"):
+            for installation in config.get("inst") or []:
                 for device in installation.get("devices"):
                     self._devices[device["id"]] = {
                         "name": device["name"],
@@ -195,6 +195,7 @@ class IntesisHome(IntesisBase):
                     _LOGGER.debug(repr(self._devices))
 
             # Update device status
+            device_id = None
             for status in status_response["status"]["status"]:
                 device_id = str(status["deviceId"])
 
@@ -207,8 +208,8 @@ class IntesisHome(IntesisBase):
 
                 self._update_device_state(device_id, status["uid"], status["value"])
 
-            if sendcallback:
-                await self._send_update_callback(device_id=str(device_id))
+            if sendcallback and device_id is not None:
+                await self._send_update_callback(device_id=device_id)
 
         return self._auth_token
 

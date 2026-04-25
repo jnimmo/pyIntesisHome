@@ -140,8 +140,8 @@ class IntesisHomeLocal(IntesisBase):
                 ) as response:
                     if response.status != 200:
                         raise IHConnectionError(
-                            f"HTTP response status is unexpected for {self._host}"
-                            "(got {response.status}, want 200)"
+                            f"HTTP response status is unexpected for {self._host} "
+                            f"(got {response.status}, want 200)"
                         )
                     json_response = await response.json()
             except asyncio.exceptions.TimeoutError as exc:
@@ -200,6 +200,8 @@ class IntesisHomeLocal(IntesisBase):
         response = await self._request(
             LOCAL_CMD_GET_DP_VALUE, uid=COMMAND_MAP[name]["uid"]
         )
+        if response is None:
+            return None
         return response["dpval"]["value"]
 
     async def _set_value(self, device_id, uid, value):
@@ -212,6 +214,8 @@ class IntesisHomeLocal(IntesisBase):
     async def get_datapoints(self) -> dict:
         """Get all available datapoints."""
         response = await self._request(LOCAL_CMD_GET_AVAIL_DP)
+        if response is None:
+            return self._datapoints
         self._datapoints = {
             dpoint["uid"]: dpoint for dpoint in response["dp"]["datapoints"]
         }
@@ -248,6 +252,8 @@ class IntesisHomeLocal(IntesisBase):
     async def get_info(self) -> dict:
         """Get device info."""
         response = await self._request(LOCAL_CMD_GET_INFO)
+        if response is None:
+            return self._info
         self._info = response["info"]
         return self._info
 
@@ -294,6 +300,8 @@ class IntesisHomeLocal(IntesisBase):
         ]
 
     def _get_fan_map(self, device_id):
+        if 4 not in self._datapoints:
+            return None
         fan_values = sorted(self._datapoints[4]["descr"]["states"])
         for values in INTESIS_MAP[67]["values"].values():
             if sorted(values.keys()) == fan_values:

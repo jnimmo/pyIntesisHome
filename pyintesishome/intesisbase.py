@@ -509,24 +509,24 @@ class IntesisBase:
             return temperature
         return value
 
-    def _set_gen_mode(self, device_id, gen_type, mode):
+    async def _set_gen_mode(self, device_id, gen_type, mode):
         """Internal method for setting the generic mode (gen_type in
         {operating_mode, climate_working_mode, tank, etc.}) with a string value"""
         if mode in COMMAND_MAP[gen_type]["values"]:
-            self._set_value(
+            await self._set_value(
                 device_id,
                 COMMAND_MAP[gen_type]["uid"],
                 COMMAND_MAP[gen_type]["values"][mode],
             )
 
-    def _set_thermo_shift(self, device_id, name, value):
+    async def _set_thermo_shift(self, device_id, name, value):
         """Public method to set thermo shift temperature."""
         min_shift = int(COMMAND_MAP[name]["min"])
         max_shift = int(COMMAND_MAP[name]["max"])
 
         if min_shift <= value <= max_shift:
             unsigned_value = uint32(value * 10)  # unsigned int 16 bit
-            self._set_value(device_id, COMMAND_MAP[name]["uid"], unsigned_value)
+            await self._set_value(device_id, COMMAND_MAP[name]["uid"], unsigned_value)
         else:
             raise ValueError(
                 f"Value for {name} has to be in range [{min_shift}],{max_shift}]"
