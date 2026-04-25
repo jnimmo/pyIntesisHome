@@ -319,7 +319,7 @@ class IntesisHomeLocal(IntesisBase):
     def has_vertical_swing(self, device_id) -> bool:
         """Entity supports vertical swing."""
         return self._has_datapoint("vvane")
-    
+
     def get_horizontal_swing_list(self, device_id) -> list:
         """Get possible entity modes."""
         uid = COMMAND_MAP["hvane"]["uid"]

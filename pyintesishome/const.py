@@ -1,4 +1,5 @@
-""" Constants for pyintesishome """
+"""Constants for pyintesishome"""
+
 INTESIS_CMD_STATUS = '{"status":{"hash":"x"},"config":{"hash":"x"}}'
 INTESIS_NULL = 32768
 
@@ -34,7 +35,7 @@ SWINGMODE_BITS = {
     128: "manual7",
     256: "manual8",
     512: "manual9",
-    1024: "swing"
+    1024: "swing",
 }
 
 INTESIS_MAP = {

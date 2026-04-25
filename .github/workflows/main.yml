@@ -3,7 +3,7 @@ name: CI
 on: [push, pull_request]
 
 env:
-  DEFAULT_PYTHON: 3.9
+  DEFAULT_PYTHON: "3.12"
 
 jobs:
   black:

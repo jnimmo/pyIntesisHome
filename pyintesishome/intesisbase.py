@@ -1,4 +1,5 @@
 """Base class for Intesis controllers."""
+
 import asyncio
 import logging
 from asyncio.exceptions import IncompleteReadError
@@ -105,11 +106,10 @@ class IntesisBase:
                 _LOGGER.debug("Received: %s", data)
 
                 await self._parse_response(data)
-                
+
                 if not self._received_response.is_set():
                     _LOGGER.debug("Resolving set_value's await")
                     self._received_response.set()
-                    
 
         except IncompleteReadError:
             _LOGGER.debug(
@@ -319,20 +319,26 @@ class IntesisBase:
                 mode_list.append(mode_bits.get(mode_bit))
 
         return mode_list
-    
+
     def get_vertical_swing_list(self, device_id) -> list:
         """Public method to return the list of vertical swing modes."""
-        config_vertical_vanes = self.get_device_property(device_id, "config_vertical_vanes")
+        config_vertical_vanes = self.get_device_property(
+            device_id, "config_vertical_vanes"
+        )
         return [
-            mode for bit, mode in SWINGMODE_BITS.items()
+            mode
+            for bit, mode in SWINGMODE_BITS.items()
             if config_vertical_vanes is not None and config_vertical_vanes & bit
         ]
 
     def get_horizontal_swing_list(self, device_id) -> list:
         """Public method to return the list of horizontal swing modes."""
-        config_horizontal_vanes = self.get_device_property(device_id, "config_horizontal_vanes")
+        config_horizontal_vanes = self.get_device_property(
+            device_id, "config_horizontal_vanes"
+        )
         return [
-            mode for bit, mode in SWINGMODE_BITS.items()
+            mode
+            for bit, mode in SWINGMODE_BITS.items()
             if config_horizontal_vanes is not None and config_horizontal_vanes & bit
         ]
 
@@ -473,7 +479,7 @@ class IntesisBase:
         """Public method returns the current horizontal vane setting."""
         swing = self.get_device_property(device_id, "hvane")
         return swing
-    
+
     def get_model(self, device_id) -> str:
         """Public method returns the device model."""
         return self._devices[str(device_id)].get("model")

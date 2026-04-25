@@ -1,4 +1,5 @@
-""" Main submodule for pyintesishome """
+"""Main submodule for pyintesishome"""
+
 import asyncio
 import json
 import logging

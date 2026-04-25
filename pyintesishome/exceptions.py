@@ -1,4 +1,4 @@
-""" Exceptions for pyintesishome """
+"""Exceptions for pyintesishome"""
 
 
 class IHConnectionError(Exception):

@@ -1,4 +1,5 @@
 """Tests for pyintesishome."""
+
 import pytest
 from aioresponses import CallbackResult, aioresponses
 
