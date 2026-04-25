@@ -311,7 +311,7 @@ class IntesisBase:
 
         # Generate the mode list from the map
         for mode_bit in mode_bits:
-            if mode_map & mode_bit:
+            if mode_map is not None and mode_map & mode_bit:
                 mode_list.append(mode_bits.get(mode_bit))
 
         return mode_list
