@@ -455,15 +455,11 @@ class IntesisBase:
     
     def get_model(self, device_id) -> str:
         """Public method returns the device model."""
-        if "model" in self._devices[str(device_id)]:
-            return self._devices[str(device_id)]["model"]
-        return None
+        return self._devices[str(device_id)].get("model")
 
     def get_fw_version(self, device_id) -> str:
         """Public method returns the firmware version."""
-        if "fw_version" in self._devices[str(device_id)]:
-            return self._devices[str(device_id)]["fw_version"]
-        return None
+        return self._devices[str(device_id)].get("fw_version")
 
     def get_error(self, device_id) -> str:
         """Public method returns the current error code + description."""
