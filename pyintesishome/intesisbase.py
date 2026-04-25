@@ -237,7 +237,11 @@ class IntesisBase:
     async def set_fan_speed(self, device_id, fan: str):
         """Public method to set the fan speed"""
         fan_map = self._get_fan_map(device_id)
+        if not isinstance(fan_map, dict):
+            return
         map_fan_speed_to_int = {v: k for k, v in fan_map.items()}
+        if fan not in map_fan_speed_to_int:
+            return
         await self._set_value(
             device_id, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
         )
@@ -405,13 +409,13 @@ class IntesisBase:
         """Public method to check if the device has vertical swing."""
         vane_config = self.get_device_property(device_id, "config_vertical_vanes")
         vane_list = self.get_device_property(device_id, "vvane_list")
-        return isinstance(vane_list, list) | bool(vane_config and vane_config > 1024)
+        return isinstance(vane_list, list) or bool(vane_config and vane_config > 1024)
 
     def has_horizontal_swing(self, device_id) -> bool:
         """Public method to check if the device has horizontal swing."""
         vane_config = self.get_device_property(device_id, "config_horizontal_vanes")
         vane_list = self.get_device_property(device_id, "hvane_list")
-        return isinstance(vane_list, list) | bool(vane_config and vane_config > 1024)
+        return isinstance(vane_list, list) or bool(vane_config and vane_config > 1024)
 
     def has_setpoint_control(self, device_id) -> bool:
         """Public method to check if the device has setpoint control."""
@@ -420,21 +424,21 @@ class IntesisBase:
     def get_setpoint(self, device_id) -> float:
         """Public method returns the target temperature."""
         setpoint = self.get_device_property(device_id, "setpoint")
-        if setpoint:
+        if setpoint is not None:
             setpoint = int(setpoint) / 10
         return setpoint
 
     def get_temperature(self, device_id) -> float:
         """Public method returns the current temperature."""
         temperature = self.get_device_property(device_id, "temperature")
-        if temperature:
+        if temperature is not None:
             temperature = twos_complement_16bit(int(temperature)) / 10
         return temperature
 
     def get_outdoor_temperature(self, device_id) -> float:
         """Public method returns the current temperature."""
         outdoor_temp = self.get_device_property(device_id, "outdoor_temp")
-        if outdoor_temp:
+        if outdoor_temp is not None:
             if self.device_type == DEVICE_INTESISHOME_LOCAL:
                 outdoor_temp = int(outdoor_temp) / 10
             else:
@@ -444,14 +448,14 @@ class IntesisBase:
     def get_max_setpoint(self, device_id) -> float:
         """Public method returns the current maximum target temperature."""
         temperature = self.get_device_property(device_id, "setpoint_max")
-        if temperature:
+        if temperature is not None:
             temperature = int(temperature) / 10
         return temperature
 
     def get_min_setpoint(self, device_id) -> float:
         """Public method returns the current minimum target temperature."""
         temperature = self.get_device_property(device_id, "setpoint_min")
-        if temperature:
+        if temperature is not None:
             temperature = int(temperature) / 10
         return temperature
 
@@ -481,6 +485,8 @@ class IntesisBase:
     def get_error(self, device_id) -> str:
         """Public method returns the current error code + description."""
         error_code = self.get_device_property(device_id, "error_code")
+        if error_code is None or error_code not in ERROR_MAP:
+            return None
         remote_code = ERROR_MAP[error_code]["code"]
         error_desc = ERROR_MAP[error_code]["desc"]
         return f"{remote_code}: {error_desc}"
