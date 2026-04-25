@@ -55,7 +55,7 @@ class IntesisBox(IntesisBase):
         _LOGGER.debug("Connecting")
         try:
             self._reader, self._writer = await asyncio.open_connection(
-                self._host, self._port, loop=self._event_loop
+                self._host, self._port
             )
             self._receive_task = asyncio.create_task(self._data_received())
             await asyncio.wait_for(self._initialise_connection(), timeout=60.0)
@@ -109,16 +109,16 @@ class IntesisBox(IntesisBase):
             self._device_id = info[1]
             self._info["firmware"] = info[4]
             self._info["rssi"] = info[5]
-        self._controller_id = self._mac.lower()
-        self._controller_name = f"{self._info['deviceModel']} ({self._mac[-4:]})"
+            self._controller_id = self._mac.lower()
+            self._controller_name = f"{self._info['deviceModel']} ({self._mac[-4:]})"
 
-        # Setup devices
-        if self._device_id not in self._devices:
-            self._devices[self._device_id] = {
-                "name": f"{self._device_type} {self._mac[-4:]}",
-                "widgets": [],
-                "model": self._info["deviceModel"],
-            }
+            # Setup devices
+            if self._device_id not in self._devices:
+                self._devices[self._device_id] = {
+                    "name": f"{self._device_type} {self._mac[-4:]}",
+                    "widgets": [],
+                    "model": self._info["deviceModel"],
+                }
         _LOGGER.debug(repr(self._devices))
 
     def _parse_change_received(self, args):
