@@ -298,8 +298,8 @@ def cloud_api_callback(url, **kwargs):
             "lastAppVersion": "1.8.1",
             "forceUpdate": 0,
             "setDelay": 0.7,
-            "serverIP": "1.2.3.4",
-            "serverPort": 8210,
+            "serverIP": "127.0.0.1",
+            "serverPort": 19999,
             "hash": "ea4b71bd4e8ba5ad045e6bbbb4118d2816efbcb5",
             "inst": [
                 {
