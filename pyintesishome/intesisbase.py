@@ -348,7 +348,7 @@ class IntesisBase:
 
         if "fan_speed" in self._devices[str(device_id)] and isinstance(fan_map, dict):
             fan_speed = self.get_device_property(device_id, "fan_speed")
-            return fan_map.get(fan_speed, fan_speed)
+            return fan_map.get(fan_speed)
         return None
 
     def get_fan_speed_list(self, device_id):

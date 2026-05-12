@@ -117,9 +117,8 @@ class IntesisHome(IntesisBase):
                     self._cmd_server, self._cmd_server_port
                 )
 
-                # pylint: disable=C0209
-                auth_msg = '{"command":"connect_req","data":{"token":%s}}' % (
-                    self._auth_token
+                auth_msg = json.dumps(
+                    {"command": "connect_req", "data": {"token": self._auth_token}}
                 )
                 self._receive_task = self._event_loop.create_task(self._data_received())
                 await self._send_command(auth_msg)
@@ -187,7 +186,7 @@ class IntesisHome(IntesisBase):
 
             # Setup devices
             for installation in config.get("inst") or []:
-                for device in installation.get("devices"):
+                for device in installation.get("devices") or []:
                     self._devices[device["id"]] = {
                         "name": device["name"],
                         "widgets": device["widgets"],
