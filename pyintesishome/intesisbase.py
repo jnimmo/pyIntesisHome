@@ -75,26 +75,62 @@ class IntesisBase:
         """Internal method to send a value to the device."""
         raise NotImplementedError()
 
-    async def _send_command(self, command: str):
+    async def _send_command(self, command: str, wait_for_response: bool = True):
+        """Write a command to the socket.
+
+        If ``wait_for_response`` is True (the default), block up to 5s for any
+        incoming message to set ``_received_response``. Note this is not a
+        per-command correlation — any frame arriving on the socket satisfies
+        the wait — so concurrent callers race. The keepalive should pass
+        ``wait_for_response=False`` since its sole purpose is to put bytes on
+        the wire; the server's reply is treated as a normal state push by
+        ``_data_received``.
+        """
         try:
             _LOGGER.debug("Sending command %s", command)
-            self._received_response.clear()
+            if wait_for_response:
+                self._received_response.clear()
             if self._writer:
                 self._writer.write(command.encode("ascii"))
                 await self._writer.drain()
+                if not wait_for_response:
+                    return
                 timeout = 5.0
                 start_time = asyncio.get_event_loop().time()
                 while not self._received_response.is_set():
                     if asyncio.get_event_loop().time() - start_time > timeout:
-                        _LOGGER.error("Timeout waiting for response")
-                        await self.stop()
+                        _LOGGER.error(
+                            "Timeout waiting for response from %s; closing socket",
+                            self._device_type,
+                        )
+                        self._close_writer()
                         break
                     await asyncio.sleep(0.1)
         except OSError as exc:
-            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
+            _LOGGER.error(
+                "%s Exception sending command: %s",
+                type(exc).__name__,
+                exc,
+            )
+            self._close_writer()
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            _LOGGER.error("Unexpected error: %s", exc)
-            await self.stop()
+            _LOGGER.error("Unexpected error sending command: %s", exc)
+            self._close_writer()
+
+    def _close_writer(self):
+        """Close the writer without tearing down tasks or session.
+
+        Closing the writer causes _data_received to see EOF and exit via
+        its finally block, which is the single trigger for the disconnect
+        handling path (callbacks, keepalive cleanup, reconnect hook).
+        """
+        writer = self._writer
+        if writer is None:
+            return
+        try:
+            writer.close()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
 
     async def _data_received(self):
         try:
@@ -130,7 +166,18 @@ class IntesisBase:
         finally:
             self._connected = False
             self._connecting = False
+            if self._keepalive_task and not self._keepalive_task.done():
+                self._keepalive_task.cancel()
             await self._send_update_callback()
+            await self._handle_disconnect()
+
+    async def _handle_disconnect(self):
+        """Hook invoked from _data_received when the connection drops.
+
+        Default is a no-op; subclasses may override to trigger reconnect
+        logic. The hook runs after _connected/_connecting have been reset
+        and the update callback has fired.
+        """
 
     def _update_device_state(self, device_id, uid, value):
         """Internal method to update the state table of IntesisHome/Airconwithme devices."""
@@ -168,8 +215,15 @@ class IntesisBase:
         await self._cancel_task_if_exists(self._receive_task)
         await self._cancel_task_if_exists(self._keepalive_task)
         if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                _LOGGER.debug(
+                    "Ignoring %s while closing writer: %s",
+                    type(exc).__name__,
+                    exc,
+                )
             self._writer = None
 
         if self._own_session and self._web_session:

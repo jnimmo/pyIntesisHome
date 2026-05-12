@@ -39,6 +39,10 @@ class IntesisHome(IntesisBase):
         self._cmd_server_port = None
         self._auth_token = None
         self._controller_id = username
+        self._should_reconnect = True
+        self._reconnect_task: asyncio.Task = None
+        self._reconnect_delay_initial = 5
+        self._reconnect_delay_max = 300
 
     async def _parse_response(self, decoded_data):
         _LOGGER.debug("%s API Received: %s", self._device_type, decoded_data)
@@ -83,39 +87,118 @@ class IntesisHome(IntesisBase):
                 message = (
                     f'{{"command":"get","data":{{"deviceId":{device_id},"uid":10}}}}'
                 )
-                await self._send_command(message)
+                # Fire and forget. The cloud doesn't appear to emit a
+                # synthetic response to a get, so waiting on
+                # _received_response would always time out and tear the
+                # socket down. The actual purpose of the keepalive is to
+                # keep bytes flowing; the server's eventual status frame
+                # arrives via _data_received like any other state push.
+                await self._send_command(message, wait_for_response=False)
         except asyncio.CancelledError:
             _LOGGER.debug("Cancelled the keepalive task")
+
+    async def _handle_disconnect(self):
+        """Schedule a reconnect attempt unless we've been intentionally stopped."""
+        if not self._should_reconnect:
+            return
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+        self._reconnect_task = self._event_loop.create_task(self._reconnect_loop())
+
+    async def _reconnect_loop(self):
+        """Retry connect() with exponential backoff until reconnected or stopped."""
+        delay = self._reconnect_delay_initial
+        while self._should_reconnect and not self._connected:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+            if not self._should_reconnect:
+                return
+            _LOGGER.info("Reconnecting to %s API", self._device_type)
+            try:
+                await self.connect()
+            except IHAuthenticationError as exc:
+                _LOGGER.error(
+                    "Authentication failure during reconnect to %s; "
+                    "stopping retries: %s",
+                    self._device_type,
+                    exc,
+                )
+                self._should_reconnect = False
+                return
+            except IHConnectionError as exc:
+                _LOGGER.warning(
+                    "Reconnect to %s failed: %s", self._device_type, exc
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                _LOGGER.error(
+                    "Unexpected error reconnecting to %s: %s",
+                    self._device_type,
+                    exc,
+                )
+            if self._connected:
+                _LOGGER.info("Reconnected to %s API", self._device_type)
+                return
+            delay = min(delay * 2, self._reconnect_delay_max)
+
+    async def stop(self):
+        """Disable reconnect and shut the controller down fully."""
+        self._should_reconnect = False
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+        await super().stop()
 
     async def connect(self):
         """Public method for connecting to IntesisHome/Airconwithme API"""
         if not self._connected and not self._connecting:
             self._connecting = True
-            self._connection_retries = 0
-
-            self._devices = {}
-            await self._cancel_task_if_exists(self._receive_task)
-
+            self._should_reconnect = True
             try:
-                self._auth_token = await self.poll_status()
-            except IHAuthenticationError as exc:
-                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                raise IHAuthenticationError from exc
-            except IHConnectionError as exc:
-                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                raise IHConnectionError from exc
+                self._connection_retries = 0
 
-            _LOGGER.debug(
-                "Opening connection to %s API at %s:%i",
-                self._device_type,
-                self._cmd_server,
-                self._cmd_server_port,
-            )
-            try:
-                # Create asyncio socket
-                self._reader, self._writer = await asyncio.open_connection(
-                    self._cmd_server, self._cmd_server_port
+                # Don't wipe self._devices here. poll_status() overwrites
+                # entries in place and the brief reset-then-repopulate window
+                # is a race against any concurrent consumer that reads
+                # get_devices() while we are awaiting poll_status.
+                await self._cancel_task_if_exists(self._receive_task)
+
+                try:
+                    self._auth_token = await self.poll_status()
+                except IHAuthenticationError as exc:
+                    _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                    raise IHAuthenticationError from exc
+                except IHConnectionError as exc:
+                    _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                    raise IHConnectionError from exc
+
+                _LOGGER.debug(
+                    "Opening connection to %s API at %s:%i",
+                    self._device_type,
+                    self._cmd_server,
+                    self._cmd_server_port,
                 )
+                try:
+                    # Create asyncio socket
+                    self._reader, self._writer = await asyncio.open_connection(
+                        self._cmd_server, self._cmd_server_port
+                    )
+                except OSError as exc:
+                    _LOGGER.warning(
+                        "Connection to %s:%s failed: %s; auto-reconnect will retry",
+                        self._cmd_server,
+                        self._cmd_server_port,
+                        exc,
+                    )
+                    self._connected = False
+                    await self._handle_disconnect()
+                    return
 
                 auth_msg = json.dumps(
                     {"command": "connect_req", "data": {"token": self._auth_token}}
@@ -124,22 +207,23 @@ class IntesisHome(IntesisBase):
                 await self._send_command(auth_msg)
                 # Clear the OTP
                 self._auth_token = None
+
+                if not self._connected:
+                    _LOGGER.warning(
+                        "Did not receive connect_rsp from %s API; "
+                        "auto-reconnect will retry",
+                        self._device_type,
+                    )
+                    # Close the socket so _data_received exits and triggers
+                    # the disconnect hook (which schedules reconnect).
+                    self._close_writer()
+                    return
+
                 self._keepalive_task = self._event_loop.create_task(
                     self._send_keepalive()
                 )
-            # Get authentication token over HTTP POST
-            except (  # pylint: disable=broad-except
-                ConnectionRefusedError,
-                Exception,
-            ) as exc:
-                _LOGGER.error(
-                    "Connection to %s:%s failed with exception %s",
-                    self._cmd_server,
-                    self._cmd_server_port,
-                    exc,
-                )
-                self._connected = False
-            self._connecting = False
+            finally:
+                self._connecting = False
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device.
