@@ -261,89 +261,119 @@ class IntesisBase:
         run_hours = self.get_device_property(device_id, "working_hours")
         return run_hours
 
-    async def set_mode(self, device_id, mode: str):
-        """Internal method for setting the mode with a string value."""
+    async def set_mode(self, device_id, mode: str) -> bool:
+        """Set the mode by string. Returns True on cloud ACK, False otherwise."""
         mode_control = "mode"
         if "mode" not in self._devices[str(device_id)]:
             mode_control = "operating_mode"
 
-        if mode in COMMAND_MAP[mode_control]["values"]:
+        if mode not in COMMAND_MAP[mode_control]["values"]:
+            return False
+        return bool(
             await self._set_value(
                 device_id,
                 COMMAND_MAP[mode_control]["uid"],
                 COMMAND_MAP[mode_control]["values"][mode],
             )
+        )
 
-    async def set_preset_mode(self, device_id, preset: str):
-        """Internal method for setting the mode with a string value."""
-        if preset in COMMAND_MAP["climate_working_mode"]["values"]:
+    async def set_preset_mode(self, device_id, preset: str) -> bool:
+        """Set the climate preset. Returns True on cloud ACK, False otherwise."""
+        if preset not in COMMAND_MAP["climate_working_mode"]["values"]:
+            return False
+        return bool(
             await self._set_value(
                 device_id,
                 COMMAND_MAP["climate_working_mode"]["uid"],
                 COMMAND_MAP["climate_working_mode"]["values"][preset],
             )
+        )
 
-    async def set_temperature(self, device_id, setpoint):
-        """Public method for setting the temperature"""
+    async def set_temperature(self, device_id, setpoint) -> bool:
+        """Set the target setpoint. Returns True on cloud ACK, False otherwise."""
         set_temp = uint32(setpoint * 10)
-        await self._set_value(device_id, COMMAND_MAP["setpoint"]["uid"], set_temp)
+        return bool(
+            await self._set_value(device_id, COMMAND_MAP["setpoint"]["uid"], set_temp)
+        )
 
-    async def set_fan_speed(self, device_id, fan: str):
-        """Public method to set the fan speed"""
+    async def set_fan_speed(self, device_id, fan: str) -> bool:
+        """Set the fan speed. Returns True on cloud ACK, False otherwise."""
         fan_map = self._get_fan_map(device_id)
         if not isinstance(fan_map, dict):
-            return
+            return False
         map_fan_speed_to_int = {v: k for k, v in fan_map.items()}
         if fan not in map_fan_speed_to_int:
-            return
-        await self._set_value(
-            device_id, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
+            return False
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["fan_speed"]["uid"],
+                map_fan_speed_to_int[fan],
+            )
         )
 
-    async def set_vertical_vane(self, device_id, vane: str):
-        """Public method to set the vertical vane"""
-        await self._set_value(
-            device_id, COMMAND_MAP["vvane"]["uid"], COMMAND_MAP["vvane"]["values"][vane]
+    async def set_vertical_vane(self, device_id, vane: str) -> bool:
+        """Set the vertical vane. Returns True on cloud ACK, False otherwise."""
+        if vane not in COMMAND_MAP["vvane"]["values"]:
+            return False
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["vvane"]["uid"],
+                COMMAND_MAP["vvane"]["values"][vane],
+            )
         )
 
-    async def set_horizontal_vane(self, device_id, vane: str):
-        """Public method to set the horizontal vane"""
-        await self._set_value(
-            device_id, COMMAND_MAP["hvane"]["uid"], COMMAND_MAP["hvane"]["values"][vane]
+    async def set_horizontal_vane(self, device_id, vane: str) -> bool:
+        """Set the horizontal vane. Returns True on cloud ACK, False otherwise."""
+        if vane not in COMMAND_MAP["hvane"]["values"]:
+            return False
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["hvane"]["uid"],
+                COMMAND_MAP["hvane"]["values"][vane],
+            )
         )
 
-    async def set_mode_heat(self, device_id):
-        """Public method to set device to heat asynchronously."""
-        await self.set_mode(device_id, "heat")
+    async def set_mode_heat(self, device_id) -> bool:
+        """Set device to heat. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "heat")
 
-    async def set_mode_cool(self, device_id):
-        """Public method to set device to cool asynchronously."""
-        await self.set_mode(device_id, "cool")
+    async def set_mode_cool(self, device_id) -> bool:
+        """Set device to cool. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "cool")
 
-    async def set_mode_fan(self, device_id):
-        """Public method to set device to fan asynchronously."""
-        await self.set_mode(device_id, "fan")
+    async def set_mode_fan(self, device_id) -> bool:
+        """Set device to fan. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "fan")
 
-    async def set_mode_auto(self, device_id):
-        """Public method to set device to auto asynchronously."""
-        await self.set_mode(device_id, "auto")
+    async def set_mode_auto(self, device_id) -> bool:
+        """Set device to auto. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "auto")
 
-    async def set_mode_dry(self, device_id):
-        """Public method to set device to dry asynchronously."""
-        await self.set_mode(device_id, "dry")
+    async def set_mode_dry(self, device_id) -> bool:
+        """Set device to dry. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "dry")
 
-    async def set_power_off(self, device_id):
-        """Public method to turn off the device asynchronously."""
-        await self._set_value(
-            device_id,
-            COMMAND_MAP["power"]["uid"],
-            COMMAND_MAP["power"]["values"]["off"],
+    async def set_power_off(self, device_id) -> bool:
+        """Turn off the device. Returns True on cloud ACK, False otherwise."""
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["power"]["uid"],
+                COMMAND_MAP["power"]["values"]["off"],
+            )
         )
 
-    async def set_power_on(self, device_id):
-        """Public method to turn on the device asynchronously."""
-        await self._set_value(
-            device_id, COMMAND_MAP["power"]["uid"], COMMAND_MAP["power"]["values"]["on"]
+    async def set_power_on(self, device_id) -> bool:
+        """Turn on the device. Returns True on cloud ACK, False otherwise."""
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["power"]["uid"],
+                COMMAND_MAP["power"]["values"]["on"],
+            )
         )
 
     def get_mode(self, device_id) -> str:
