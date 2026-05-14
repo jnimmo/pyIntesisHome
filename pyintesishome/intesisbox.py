@@ -4,7 +4,7 @@ import asyncio
 import logging
 from typing import List
 
-from pyintesishome.intesisbase import IntesisBase
+from .intesisbase import IntesisBase
 
 from .const import (
     DEVICE_INTESISBOX,
