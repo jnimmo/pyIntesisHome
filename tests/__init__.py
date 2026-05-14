@@ -6,7 +6,7 @@ from aioresponses import CallbackResult, aioresponses
 MOCK_HOST = "1.1.1.1"
 MOCK_PASS = "password"
 MOCK_USER = "admin"
-MOCK_DEVICE_ID = "mock_dev_id"
+MOCK_DEVICE_ID = "12345"
 
 MOCK_VAL_POWER_STATE = 0
 MOCK_VAL_MODE = 4
