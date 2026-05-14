@@ -4,12 +4,22 @@ import asyncio
 import json
 import logging
 import socket
+from typing import NamedTuple
 
 import aiohttp
 
 from .const import API_URL, API_VER, DEVICE_INTESISHOME, INTESIS_CMD_STATUS
 from .exceptions import IHAuthenticationError, IHConnectionError
 from .intesisbase import IntesisBase
+
+
+class _PendingSet(NamedTuple):
+    """A SET awaiting its set_ack from the cloud."""
+
+    uid: int
+    value: int
+    device_id: int
+    future: asyncio.Future
 
 _LOGGER = logging.getLogger("pyintesishome")
 
@@ -39,6 +49,19 @@ class IntesisHome(IntesisBase):
         self._cmd_server_port = None
         self._auth_token = None
         self._controller_id = username
+        self._should_reconnect = True
+        self._reconnect_task: asyncio.Task = None
+        self._reconnect_delay_initial = 5
+        self._reconnect_delay_max = 300
+        # SET correlation. The cloud's set_ack frame echoes our seqNo
+        # masked to the low byte (seqNo & 0xFF) regardless of whether the
+        # SET was applied, clamped, or targeted an invalid uid - there's
+        # no success/failure signal in the seqNo. seqNos cycle 0..255 so
+        # the cloud's echo lines up with the value we sent and lookups
+        # are a direct dict access.
+        self._set_seq_counter = -1
+        self._pending_set_acks: dict[int, _PendingSet] = {}
+        self._set_ack_timeout = 5.0
 
     async def _parse_response(self, decoded_data):
         _LOGGER.debug("%s API Received: %s", self._device_type, decoded_data)
@@ -66,6 +89,8 @@ class IntesisHome(IntesisBase):
         elif resp["command"] == "rssi":
             # Wireless strength has changed
             self._update_rssi(resp["data"]["deviceId"], resp["data"]["value"])
+        elif resp["command"] == "set_ack":
+            self._handle_set_ack(resp["data"])
         else:
             _LOGGER.debug("Unexpected command received: %s", resp["command"])
         # Ensure the _received_response event is set
@@ -83,64 +108,162 @@ class IntesisHome(IntesisBase):
                 message = (
                     f'{{"command":"get","data":{{"deviceId":{device_id},"uid":10}}}}'
                 )
-                await self._send_command(message)
+                # Fire and forget. The cloud doesn't appear to emit a
+                # synthetic response to a get, so waiting on
+                # _received_response would always time out and tear the
+                # socket down. The actual purpose of the keepalive is to
+                # keep bytes flowing; the server's eventual status frame
+                # arrives via _data_received like any other state push.
+                await self._send_command(message, wait_for_response=False)
         except asyncio.CancelledError:
             _LOGGER.debug("Cancelled the keepalive task")
+
+    async def _handle_disconnect(self):
+        """Schedule a reconnect.
+
+        In-flight SET futures are intentionally left pending. The auto-
+        reconnect may bring the socket back within the per-SET timeout
+        and the cloud could still deliver the ack via the new session.
+        Failing the futures here would make every SET that races a
+        transient disconnect look like an instant rejection from the
+        caller's perspective; we'd rather wait for the timeout in
+        _set_value (currently 5s) to express the failure.
+
+        stop() does fail pending futures, since that's an intentional
+        shutdown and we don't want HA blocking 5s per pending SET on
+        unload.
+        """
+        if not self._should_reconnect:
+            return
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+        self._reconnect_task = self._event_loop.create_task(self._reconnect_loop())
+
+    async def stop(self):
+        """Disable reconnect and shut the controller down fully."""
+        self._should_reconnect = False
+        # Cancel reconnect first so it doesn't kick in mid-stop.
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+        # Fail any pending SETs so awaiting callers don't hang.
+        for pending in list(self._pending_set_acks.values()):
+            if not pending.future.done():
+                pending.future.set_result(False)
+        self._pending_set_acks.clear()
+        await super().stop()
+
+    async def _reconnect_loop(self):
+        """Retry connect() with exponential backoff until reconnected or stopped."""
+        delay = self._reconnect_delay_initial
+        while self._should_reconnect and not self._connected:
+            try:
+                await asyncio.sleep(delay)
+            except asyncio.CancelledError:
+                return
+            if not self._should_reconnect:
+                return
+            _LOGGER.info("Reconnecting to %s API", self._device_type)
+            try:
+                await self.connect()
+            except IHAuthenticationError as exc:
+                _LOGGER.error(
+                    "Authentication failure during reconnect to %s; "
+                    "stopping retries: %s",
+                    self._device_type,
+                    exc,
+                )
+                self._should_reconnect = False
+                return
+            except IHConnectionError as exc:
+                _LOGGER.warning(
+                    "Reconnect to %s failed: %s", self._device_type, exc
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                _LOGGER.error(
+                    "Unexpected error reconnecting to %s: %s",
+                    self._device_type,
+                    exc,
+                )
+            if self._connected:
+                _LOGGER.info("Reconnected to %s API", self._device_type)
+                return
+            delay = min(delay * 2, self._reconnect_delay_max)
 
     async def connect(self):
         """Public method for connecting to IntesisHome/Airconwithme API"""
         if not self._connected and not self._connecting:
             self._connecting = True
-            self._connection_retries = 0
-
-            self._devices = {}
-            await self._cancel_task_if_exists(self._receive_task)
-
+            self._should_reconnect = True
             try:
-                self._auth_token = await self.poll_status()
-            except IHAuthenticationError as exc:
-                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                raise IHAuthenticationError from exc
-            except IHConnectionError as exc:
-                _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                raise IHConnectionError from exc
+                self._connection_retries = 0
 
-            _LOGGER.debug(
-                "Opening connection to %s API at %s:%i",
-                self._device_type,
-                self._cmd_server,
-                self._cmd_server_port,
-            )
-            try:
-                # Create asyncio socket
-                self._reader, self._writer = await asyncio.open_connection(
-                    self._cmd_server, self._cmd_server_port
+                # Don't wipe self._devices here. poll_status() overwrites
+                # entries in place and the brief reset-then-repopulate window
+                # is a race against any concurrent consumer that reads
+                # get_devices() while we are awaiting poll_status.
+                await self._cancel_task_if_exists(self._receive_task)
+
+                try:
+                    self._auth_token = await self.poll_status()
+                except IHAuthenticationError as exc:
+                    _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                    raise IHAuthenticationError from exc
+                except IHConnectionError as exc:
+                    _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+                    raise IHConnectionError from exc
+
+                _LOGGER.debug(
+                    "Opening connection to %s API at %s:%i",
+                    self._device_type,
+                    self._cmd_server,
+                    self._cmd_server_port,
                 )
+                try:
+                    # Create asyncio socket
+                    self._reader, self._writer = await asyncio.open_connection(
+                        self._cmd_server, self._cmd_server_port
+                    )
+                except OSError as exc:
+                    _LOGGER.warning(
+                        "Connection to %s:%s failed: %s; auto-reconnect will retry",
+                        self._cmd_server,
+                        self._cmd_server_port,
+                        exc,
+                    )
+                    self._connected = False
+                    await self._handle_disconnect()
+                    return
 
-                # pylint: disable=C0209
-                auth_msg = '{"command":"connect_req","data":{"token":%s}}' % (
-                    self._auth_token
+                auth_msg = json.dumps(
+                    {"command": "connect_req", "data": {"token": self._auth_token}}
                 )
                 self._receive_task = self._event_loop.create_task(self._data_received())
                 await self._send_command(auth_msg)
                 # Clear the OTP
                 self._auth_token = None
+
+                if not self._connected:
+                    _LOGGER.warning(
+                        "Did not receive connect_rsp from %s API; "
+                        "auto-reconnect will retry",
+                        self._device_type,
+                    )
+                    # Close the socket so _data_received exits and triggers
+                    # the disconnect hook (which schedules reconnect).
+                    self._close_writer()
+                    return
+
                 self._keepalive_task = self._event_loop.create_task(
                     self._send_keepalive()
                 )
-            # Get authentication token over HTTP POST
-            except (  # pylint: disable=broad-except
-                ConnectionRefusedError,
-                Exception,
-            ) as exc:
-                _LOGGER.error(
-                    "Connection to %s:%s failed with exception %s",
-                    self._cmd_server,
-                    self._cmd_server_port,
-                    exc,
-                )
-                self._connected = False
-            self._connecting = False
+            finally:
+                self._connecting = False
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device.
@@ -187,7 +310,7 @@ class IntesisHome(IntesisBase):
 
             # Setup devices
             for installation in config.get("inst") or []:
-                for device in installation.get("devices"):
+                for device in installation.get("devices") or []:
                     self._devices[device["id"]] = {
                         "name": device["name"],
                         "widgets": device["widgets"],
@@ -214,14 +337,102 @@ class IntesisHome(IntesisBase):
 
         return self._auth_token
 
-    # pylint: disable=C0209
-    async def _set_value(self, device_id, uid, value):
-        """Internal method to send a command to the API (and connect if necessary)"""
-        message = (
-            '{"command":"set","data":{"deviceId":%s,"uid":%i,"value":%i,"seqNo":0}}'
-            % (device_id, uid, value)
+    async def _set_value(self, device_id, uid, value) -> bool:
+        """Send a SET to the cloud and wait for the matching set_ack.
+
+        Returns True if the cloud acknowledged receiving the SET, False
+        if no acknowledgement arrived within ``_set_ack_timeout`` seconds
+        (i.e. the connection is broken or the cloud is unresponsive).
+
+        Note: the cloud always ACKs malformed or out-of-range SETs the
+        same way it ACKs valid ones - there's no protocol-level
+        rejection signal we can detect here. False reliably indicates a
+        connection problem; True only indicates the SET reached the
+        cloud, not that the device applied the requested value
+        unchanged (the cloud may have clamped it).
+
+        Multiple SETs can be in flight concurrently. Each gets its own
+        seqNo and the cloud echoes it (mod 256). The future stored in
+        ``_pending_set_acks[seq]`` is resolved by ``_handle_set_ack``.
+        """
+        seq = self._next_set_seqno()
+        fut = self._event_loop.create_future()
+        self._pending_set_acks[seq] = _PendingSet(
+            uid=int(uid),
+            value=int(value),
+            device_id=int(device_id),
+            future=fut,
         )
-        await self._send_command(message)
+        message = json.dumps(
+            {
+                "command": "set",
+                "data": {
+                    "deviceId": int(device_id),
+                    "uid": int(uid),
+                    "value": int(value),
+                    "seqNo": seq,
+                },
+            }
+        )
+        try:
+            await self._send_command(message, wait_for_response=False)
+            return await asyncio.wait_for(fut, timeout=self._set_ack_timeout)
+        except asyncio.TimeoutError:
+            _LOGGER.warning(
+                "SET uid=%s value=%s seqNo=%s not acknowledged within %ss",
+                uid,
+                value,
+                seq,
+                self._set_ack_timeout,
+            )
+            return False
+        finally:
+            self._pending_set_acks.pop(seq, None)
+
+    def _next_set_seqno(self) -> int:
+        """Allocate a SET seqNo in the 0..255 range.
+
+        The cloud uses an 8-bit seqNo in set_ack regardless of what we
+        send, so there's no point sending wider values. Cycling 0..255
+        bounds the in-flight pending dict to 256 entries and guarantees
+        concurrently outstanding SETs each get a unique echo.
+        """
+        self._set_seq_counter = (self._set_seq_counter + 1) % 256
+        return self._set_seq_counter
+
+    def _handle_set_ack(self, data: dict) -> None:
+        """Resolve the originating SET's future on receiving the ack.
+
+        The cloud's set_ack echoes the seqNo we sent (8-bit) regardless
+        of whether the SET was applied, clamped, or rejected. We treat
+        any matching ACK as success - cloud-side rejections of malformed
+        SETs are not visible at this layer. The ACK also carries a fresh
+        rssi value which we surface like a normal rssi frame.
+        """
+        seq = data.get("seqNo")
+        rssi = data.get("rssi")
+        device_id = data.get("deviceId")
+        if rssi is not None:
+            self._update_rssi(device_id, rssi)
+
+        if seq is None:
+            _LOGGER.debug("set_ack with no seqNo: %s", data)
+            return
+
+        pending = self._pending_set_acks.get(seq)
+        if pending is None:
+            _LOGGER.debug("Stale or unmatched set_ack seqNo=%s", seq)
+            return
+
+        _LOGGER.debug(
+            "SET acknowledged: uid=%s value=%s seqNo=%s device=%s",
+            pending.uid,
+            pending.value,
+            seq,
+            device_id,
+        )
+        if not pending.future.done():
+            pending.future.set_result(True)
 
     def _get_fan_map(self, device_id):
         return self.get_device_property(device_id, "config_fan_map")

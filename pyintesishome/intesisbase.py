@@ -75,26 +75,62 @@ class IntesisBase:
         """Internal method to send a value to the device."""
         raise NotImplementedError()
 
-    async def _send_command(self, command: str):
+    async def _send_command(self, command: str, wait_for_response: bool = True):
+        """Write a command to the socket.
+
+        If ``wait_for_response`` is True (the default), block up to 5s for any
+        incoming message to set ``_received_response``. Note this is not a
+        per-command correlation — any frame arriving on the socket satisfies
+        the wait — so concurrent callers race. The keepalive should pass
+        ``wait_for_response=False`` since its sole purpose is to put bytes on
+        the wire; the server's reply is treated as a normal state push by
+        ``_data_received``.
+        """
         try:
             _LOGGER.debug("Sending command %s", command)
-            self._received_response.clear()
+            if wait_for_response:
+                self._received_response.clear()
             if self._writer:
                 self._writer.write(command.encode("ascii"))
                 await self._writer.drain()
+                if not wait_for_response:
+                    return
                 timeout = 5.0
                 start_time = asyncio.get_event_loop().time()
                 while not self._received_response.is_set():
                     if asyncio.get_event_loop().time() - start_time > timeout:
-                        _LOGGER.error("Timeout waiting for response")
-                        await self.stop()
+                        _LOGGER.error(
+                            "Timeout waiting for response from %s; closing socket",
+                            self._device_type,
+                        )
+                        self._close_writer()
                         break
                     await asyncio.sleep(0.1)
         except OSError as exc:
-            _LOGGER.error("%s Exception. %s / %s", type(exc), exc.args, exc)
+            _LOGGER.error(
+                "%s Exception sending command: %s",
+                type(exc).__name__,
+                exc,
+            )
+            self._close_writer()
         except Exception as exc:  # pylint: disable=broad-exception-caught
-            _LOGGER.error("Unexpected error: %s", exc)
-            await self.stop()
+            _LOGGER.error("Unexpected error sending command: %s", exc)
+            self._close_writer()
+
+    def _close_writer(self):
+        """Close the writer without tearing down tasks or session.
+
+        Closing the writer causes _data_received to see EOF and exit via
+        its finally block, which is the single trigger for the disconnect
+        handling path (callbacks, keepalive cleanup, reconnect hook).
+        """
+        writer = self._writer
+        if writer is None:
+            return
+        try:
+            writer.close()
+        except Exception:  # pylint: disable=broad-exception-caught
+            pass
 
     async def _data_received(self):
         try:
@@ -130,7 +166,18 @@ class IntesisBase:
         finally:
             self._connected = False
             self._connecting = False
+            if self._keepalive_task and not self._keepalive_task.done():
+                self._keepalive_task.cancel()
             await self._send_update_callback()
+            await self._handle_disconnect()
+
+    async def _handle_disconnect(self):
+        """Hook invoked from _data_received when the connection drops.
+
+        Default is a no-op; subclasses may override to trigger reconnect
+        logic. The hook runs after _connected/_connecting have been reset
+        and the update callback has fired.
+        """
 
     def _update_device_state(self, device_id, uid, value):
         """Internal method to update the state table of IntesisHome/Airconwithme devices."""
@@ -168,8 +215,15 @@ class IntesisBase:
         await self._cancel_task_if_exists(self._receive_task)
         await self._cancel_task_if_exists(self._keepalive_task)
         if self._writer:
-            self._writer.close()
-            await self._writer.wait_closed()
+            try:
+                self._writer.close()
+                await self._writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError, OSError) as exc:
+                _LOGGER.debug(
+                    "Ignoring %s while closing writer: %s",
+                    type(exc).__name__,
+                    exc,
+                )
             self._writer = None
 
         if self._own_session and self._web_session:
@@ -207,89 +261,119 @@ class IntesisBase:
         run_hours = self.get_device_property(device_id, "working_hours")
         return run_hours
 
-    async def set_mode(self, device_id, mode: str):
-        """Internal method for setting the mode with a string value."""
+    async def set_mode(self, device_id, mode: str) -> bool:
+        """Set the mode by string. Returns True on cloud ACK, False otherwise."""
         mode_control = "mode"
         if "mode" not in self._devices[str(device_id)]:
             mode_control = "operating_mode"
 
-        if mode in COMMAND_MAP[mode_control]["values"]:
+        if mode not in COMMAND_MAP[mode_control]["values"]:
+            return False
+        return bool(
             await self._set_value(
                 device_id,
                 COMMAND_MAP[mode_control]["uid"],
                 COMMAND_MAP[mode_control]["values"][mode],
             )
+        )
 
-    async def set_preset_mode(self, device_id, preset: str):
-        """Internal method for setting the mode with a string value."""
-        if preset in COMMAND_MAP["climate_working_mode"]["values"]:
+    async def set_preset_mode(self, device_id, preset: str) -> bool:
+        """Set the climate preset. Returns True on cloud ACK, False otherwise."""
+        if preset not in COMMAND_MAP["climate_working_mode"]["values"]:
+            return False
+        return bool(
             await self._set_value(
                 device_id,
                 COMMAND_MAP["climate_working_mode"]["uid"],
                 COMMAND_MAP["climate_working_mode"]["values"][preset],
             )
+        )
 
-    async def set_temperature(self, device_id, setpoint):
-        """Public method for setting the temperature"""
+    async def set_temperature(self, device_id, setpoint) -> bool:
+        """Set the target setpoint. Returns True on cloud ACK, False otherwise."""
         set_temp = uint32(setpoint * 10)
-        await self._set_value(device_id, COMMAND_MAP["setpoint"]["uid"], set_temp)
+        return bool(
+            await self._set_value(device_id, COMMAND_MAP["setpoint"]["uid"], set_temp)
+        )
 
-    async def set_fan_speed(self, device_id, fan: str):
-        """Public method to set the fan speed"""
+    async def set_fan_speed(self, device_id, fan: str) -> bool:
+        """Set the fan speed. Returns True on cloud ACK, False otherwise."""
         fan_map = self._get_fan_map(device_id)
         if not isinstance(fan_map, dict):
-            return
+            return False
         map_fan_speed_to_int = {v: k for k, v in fan_map.items()}
         if fan not in map_fan_speed_to_int:
-            return
-        await self._set_value(
-            device_id, COMMAND_MAP["fan_speed"]["uid"], map_fan_speed_to_int[fan]
+            return False
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["fan_speed"]["uid"],
+                map_fan_speed_to_int[fan],
+            )
         )
 
-    async def set_vertical_vane(self, device_id, vane: str):
-        """Public method to set the vertical vane"""
-        await self._set_value(
-            device_id, COMMAND_MAP["vvane"]["uid"], COMMAND_MAP["vvane"]["values"][vane]
+    async def set_vertical_vane(self, device_id, vane: str) -> bool:
+        """Set the vertical vane. Returns True on cloud ACK, False otherwise."""
+        if vane not in COMMAND_MAP["vvane"]["values"]:
+            return False
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["vvane"]["uid"],
+                COMMAND_MAP["vvane"]["values"][vane],
+            )
         )
 
-    async def set_horizontal_vane(self, device_id, vane: str):
-        """Public method to set the horizontal vane"""
-        await self._set_value(
-            device_id, COMMAND_MAP["hvane"]["uid"], COMMAND_MAP["hvane"]["values"][vane]
+    async def set_horizontal_vane(self, device_id, vane: str) -> bool:
+        """Set the horizontal vane. Returns True on cloud ACK, False otherwise."""
+        if vane not in COMMAND_MAP["hvane"]["values"]:
+            return False
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["hvane"]["uid"],
+                COMMAND_MAP["hvane"]["values"][vane],
+            )
         )
 
-    async def set_mode_heat(self, device_id):
-        """Public method to set device to heat asynchronously."""
-        await self.set_mode(device_id, "heat")
+    async def set_mode_heat(self, device_id) -> bool:
+        """Set device to heat. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "heat")
 
-    async def set_mode_cool(self, device_id):
-        """Public method to set device to cool asynchronously."""
-        await self.set_mode(device_id, "cool")
+    async def set_mode_cool(self, device_id) -> bool:
+        """Set device to cool. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "cool")
 
-    async def set_mode_fan(self, device_id):
-        """Public method to set device to fan asynchronously."""
-        await self.set_mode(device_id, "fan")
+    async def set_mode_fan(self, device_id) -> bool:
+        """Set device to fan. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "fan")
 
-    async def set_mode_auto(self, device_id):
-        """Public method to set device to auto asynchronously."""
-        await self.set_mode(device_id, "auto")
+    async def set_mode_auto(self, device_id) -> bool:
+        """Set device to auto. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "auto")
 
-    async def set_mode_dry(self, device_id):
-        """Public method to set device to dry asynchronously."""
-        await self.set_mode(device_id, "dry")
+    async def set_mode_dry(self, device_id) -> bool:
+        """Set device to dry. Returns True on cloud ACK, False otherwise."""
+        return await self.set_mode(device_id, "dry")
 
-    async def set_power_off(self, device_id):
-        """Public method to turn off the device asynchronously."""
-        await self._set_value(
-            device_id,
-            COMMAND_MAP["power"]["uid"],
-            COMMAND_MAP["power"]["values"]["off"],
+    async def set_power_off(self, device_id) -> bool:
+        """Turn off the device. Returns True on cloud ACK, False otherwise."""
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["power"]["uid"],
+                COMMAND_MAP["power"]["values"]["off"],
+            )
         )
 
-    async def set_power_on(self, device_id):
-        """Public method to turn on the device asynchronously."""
-        await self._set_value(
-            device_id, COMMAND_MAP["power"]["uid"], COMMAND_MAP["power"]["values"]["on"]
+    async def set_power_on(self, device_id) -> bool:
+        """Turn on the device. Returns True on cloud ACK, False otherwise."""
+        return bool(
+            await self._set_value(
+                device_id,
+                COMMAND_MAP["power"]["uid"],
+                COMMAND_MAP["power"]["values"]["on"],
+            )
         )
 
     def get_mode(self, device_id) -> str:
@@ -348,7 +432,7 @@ class IntesisBase:
 
         if "fan_speed" in self._devices[str(device_id)] and isinstance(fan_map, dict):
             fan_speed = self.get_device_property(device_id, "fan_speed")
-            return fan_map.get(fan_speed, fan_speed)
+            return fan_map.get(fan_speed)
         return None
 
     def get_fan_speed_list(self, device_id):
