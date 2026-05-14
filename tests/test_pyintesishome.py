@@ -9,7 +9,6 @@ import pytest_asyncio
 from pyintesishome import IntesisHome, IntesisHomeLocal
 from pyintesishome.const import API_URL, DEVICE_INTESISHOME
 
-from . import mock_aioresponse  # noqa: F401
 from . import (
     MOCK_DEVICE_ID,
     MOCK_HOST,
@@ -19,6 +18,7 @@ from . import (
     cloud_api_callback,
     intesisbox_api_callback,
     local_api_callback,
+    mock_aioresponse,  # noqa: F401
 )
 
 
