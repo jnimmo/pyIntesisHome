@@ -287,9 +287,8 @@ COMMAND_MAP = {
             "swing": 10,
         },
     },
-    "setpoint": {"uid": 9}
+    "setpoint": {"uid": 9},
     # aquarea
-    ,
     "quiet": {"uid": 34, "values": {"off": 0, "on": 1}},
     "tank": {"uid": 44, "values": {"comfort": 0, "eco": 1, "powerful": 2}},
     "error_reset": {"uid": 54, "values": {"on": 1}},

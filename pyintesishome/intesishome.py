@@ -21,6 +21,7 @@ class _PendingSet(NamedTuple):
     device_id: int
     future: asyncio.Future
 
+
 _LOGGER = logging.getLogger("pyintesishome")
 
 
@@ -179,9 +180,7 @@ class IntesisHome(IntesisBase):
                 self._should_reconnect = False
                 return
             except IHConnectionError as exc:
-                _LOGGER.warning(
-                    "Reconnect to %s failed: %s", self._device_type, exc
-                )
+                _LOGGER.warning("Reconnect to %s failed: %s", self._device_type, exc)
             except asyncio.CancelledError:
                 return
             except Exception as exc:  # pylint: disable=broad-exception-caught
