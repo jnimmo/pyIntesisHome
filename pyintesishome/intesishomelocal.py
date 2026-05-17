@@ -169,7 +169,7 @@ class IntesisHomeLocal(IntesisBase):
             # If there's neither a "success" or "error" key, something is very
             # wonky, so log an error plus the entire response.
             if json_response.get("success", False):
-                return json_response.get("data")
+                return json_response.get("data") or {}
             if "error" in json_response:
                 error = json_response["error"]
                 if error.get("code") in [1, 5]:
