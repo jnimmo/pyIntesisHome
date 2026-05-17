@@ -322,12 +322,13 @@ class IntesisHomeLocal(IntesisBase):
 
     def get_horizontal_swing_list(self, device_id) -> list:
         """Get possible entity modes."""
+        if not self._has_datapoint("hvane"):
+            return []
         uid = COMMAND_MAP["hvane"]["uid"]
         return [
             INTESIS_MAP[uid]["values"][i]
             for i in self._datapoints[uid]["descr"]["states"]
         ]
-
     def has_horizontal_swing(self, device_id) -> bool:
         """Entity supports horizontal swing."""
         return self._has_datapoint("hvane")
