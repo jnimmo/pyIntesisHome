@@ -308,7 +308,7 @@ class IntesisHomeLocal(IntesisBase):
         device_model = self._info.get("deviceModel", "") if self._info else ""
         if 0 not in fan_values and "MH-AC-WIFI" in device_model:
             fan_values = [0] + fan_values
-        for map_key, values in INTESIS_MAP[67]["values"].items():
+        for values in INTESIS_MAP[67]["values"].values():
             if sorted(values.keys()) == fan_values:
                 return values
         return INTESIS_MAP[67]["values"][63]
@@ -334,6 +334,7 @@ class IntesisHomeLocal(IntesisBase):
             INTESIS_MAP[uid]["values"][i]
             for i in self._datapoints[uid]["descr"]["states"]
         ]
+
     def has_horizontal_swing(self, device_id) -> bool:
         """Entity supports horizontal swing."""
         return self._has_datapoint("hvane")

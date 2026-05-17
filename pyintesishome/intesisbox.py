@@ -4,8 +4,6 @@ import asyncio
 import logging
 from typing import List
 
-from .intesisbase import IntesisBase
-
 from .const import (
     DEVICE_INTESISBOX,
     INTESIS_NULL,
@@ -21,6 +19,7 @@ from .const import (
     INTESISBOX_MODE_MAP,
 )
 from .helpers import uint32
+from .intesisbase import IntesisBase
 
 _LOGGER = logging.getLogger("pyintesishome")
 
