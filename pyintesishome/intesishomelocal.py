@@ -205,11 +205,12 @@ class IntesisHomeLocal(IntesisBase):
         return response["dpval"]["value"]
 
     async def _set_value(self, device_id, uid, value):
-        return await self._request(
+        result = await self._request(
             LOCAL_CMD_SET_DP_VALUE,
             uid=uid,
             value=value,
         )
+        return result is not None
 
     async def get_datapoints(self) -> dict:
         """Get all available datapoints."""
@@ -334,6 +335,7 @@ class IntesisHomeLocal(IntesisBase):
             INTESIS_MAP[uid]["values"][i]
             for i in self._datapoints[uid]["descr"]["states"]
         ]
+
     def has_horizontal_swing(self, device_id) -> bool:
         """Entity supports horizontal swing."""
         return self._has_datapoint("hvane")
