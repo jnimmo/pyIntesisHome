@@ -169,7 +169,7 @@ class IntesisHomeLocal(IntesisBase):
             # If there's neither a "success" or "error" key, something is very
             # wonky, so log an error plus the entire response.
             if json_response.get("success", False):
-                return json_response.get("data")
+                return json_response.get("data") or {}
             if "error" in json_response:
                 error = json_response["error"]
                 if error.get("code") in [1, 5]:
@@ -205,11 +205,12 @@ class IntesisHomeLocal(IntesisBase):
         return response["dpval"]["value"]
 
     async def _set_value(self, device_id, uid, value):
-        return await self._request(
+        result = await self._request(
             LOCAL_CMD_SET_DP_VALUE,
             uid=uid,
             value=value,
         )
+        return result is not None
 
     async def get_datapoints(self) -> dict:
         """Get all available datapoints."""
