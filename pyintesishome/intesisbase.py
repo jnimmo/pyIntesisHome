@@ -583,11 +583,11 @@ class IntesisBase:
             for callback in self._update_callbacks:
                 await callback(device_id=device_id)
 
-    def add_update_callback(self, method):
+    async def add_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._update_callbacks.append(method)
 
-    def remove_update_callback(self, method):
+    async def remove_update_callback(self, method):
         """Public method to add a callback subscriber."""
         self._update_callbacks.remove(method)
 
