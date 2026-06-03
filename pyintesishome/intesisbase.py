@@ -254,7 +254,10 @@ class IntesisBase:
 
     def get_device_property(self, device_id, property_name):
         """Public method to get a property of the specified device"""
-        return self._devices[str(device_id)].get(property_name)
+        device = self._devices.get(str(device_id))
+        if device is None:
+            return None
+        return device.get(property_name)
 
     def get_run_hours(self, device_id) -> str:
         """Public method returns the run hours of the IntesisHome controller."""
