@@ -9,7 +9,7 @@ long_description = (this_directory / "README.md").read_text()
 
 setup(
     name="pyintesishome",
-    version="2.0.1",
+    version="2.0.2",
     description="A python3 library for running asynchronus communications with IntesisHome Smart AC Controllers",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -20,9 +20,9 @@ setup(
     install_requires=["aiohttp>=3.7.4,<4"],
     packages=["pyintesishome"],
     classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Programming Language :: Python :: 3.4",
-        "Programming Language :: Python :: 3.5",
+        "Development Status :: 4 - Beta",
+        "Programming Language :: Python :: 3.14",
         "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
+        "Topic :: Home Automation",
     ],
 )
