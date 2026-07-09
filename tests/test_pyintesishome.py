@@ -6,7 +6,7 @@ import aiohttp
 import pytest
 import pytest_asyncio
 
-from pyintesishome import IntesisHome, IntesisHomeLocal
+from pyintesishome import IntesisBox, IntesisHome, IntesisHomeLocal
 from pyintesishome.const import API_URL, DEVICE_INTESISHOME
 
 from . import (
@@ -287,3 +287,25 @@ async def test_get_device(controller):
     result = controller.get_device(MOCK_DEVICE_ID)
     assert isinstance(result, dict)
     assert len(result) > 20
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_state_change_fires_update_callback():
+    """A CHN,1 push from the box must notify subscribers, not just update
+    internal state silently - otherwise consumers relying purely on the
+    callback (should_poll=False) never see the change."""
+    box = IntesisBox(MOCK_HOST)
+    box._device_id = MOCK_DEVICE_ID
+    box._devices[MOCK_DEVICE_ID] = {}
+
+    received = []
+
+    async def callback(device_id=None):
+        received.append(device_id)
+
+    box.add_update_callback(callback)
+
+    await box._parse_response("CHN,1:AMBTEMP,215\r")
+
+    assert received == [MOCK_DEVICE_ID]
+    await box.stop()
