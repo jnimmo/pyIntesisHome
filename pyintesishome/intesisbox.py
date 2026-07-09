@@ -84,6 +84,7 @@ class IntesisBox(IntesisBase):
     async def _parse_response(self, decoded_data):
         """Parses the API response and routes to the correct handler method."""
         lines_received: List[str] = decoded_data.strip().splitlines()
+        state_changed = False
         for line in lines_received:
             cmdlist = line.split(":", 1)
             cmd = cmdlist[0]
@@ -94,11 +95,17 @@ class IntesisBox(IntesisBase):
                         self._parse_id_received(args)
                     elif cmd == "CHN,1":
                         self._parse_change_received(args)
+                        state_changed = True
                     elif cmd == "LIMITS":
                         self._parse_limits_received(args)
             if not self._received_response.is_set():
                 _LOGGER.debug("Resolving set_value's await")
                 self._received_response.set()
+
+        # Notify subscribers once per batch of CHN,1 pushes rather than once
+        # per line, since a single TCP read can contain multiple updates.
+        if state_changed:
+            await self._send_update_callback(device_id=self._device_id)
 
     def _parse_id_received(self, args):
         # ID:Model,MAC,IP,Protocol,Version,RSSI
