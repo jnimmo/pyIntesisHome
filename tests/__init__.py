@@ -25,6 +25,15 @@ MOCK_VAL_MAX_SET = 300
 MOCK_VAL_OUT_TEMP = 260
 MOCK_VAL_PRESET = 1
 
+# Mutable switches letting a test change how the mocked local device behaves
+# part way through a run. local_api_callback consults them on every request.
+LOCAL_DEVICE_STATE = {"failing": False, "reject_auth": False}
+
+
+def reset_local_device_state():
+    """Return the mocked local device to answering normally."""
+    LOCAL_DEVICE_STATE.update(failing=False, reject_auth=False)
+
 
 @pytest.fixture
 def mock_aioresponse():
@@ -38,6 +47,25 @@ def intesisbox_api_callback(url, **kwargs):
 
 
 def local_api_callback(url, **kwargs):
+    if LOCAL_DEVICE_STATE["failing"]:
+        # A device that has stopped answering usefully. 500 surfaces as an
+        # IHConnectionError out of _request without exercising the retry
+        # loop's timeout, keeping tests fast.
+        return CallbackResult(status=500)
+
+    if LOCAL_DEVICE_STATE["reject_auth"]:
+        # Credentials no longer accepted, e.g. changed on the device. Error
+        # code 5 makes _request clear the session and re-authenticate, and
+        # the login then fails the same way.
+        return CallbackResult(
+            status=200,
+            payload={
+                "success": False,
+                "data": None,
+                "error": {"code": 5, "message": "Incorrect User name or password"},
+            },
+        )
+
     req_json = kwargs.pop("json")
     req_cmd = req_json["command"]
     req_data = req_json["data"]

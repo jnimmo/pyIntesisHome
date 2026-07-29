@@ -16,6 +16,7 @@ from pyintesishome import (
 from pyintesishome.const import API_URL, DEVICE_INTESISHOME
 
 from . import (
+    LOCAL_DEVICE_STATE,
     MOCK_DEVICE_ID,
     MOCK_HOST,
     MOCK_PASS,
@@ -26,12 +27,25 @@ from . import (
     intesisbox_api_callback,
     local_api_callback,
     mock_aioresponse,  # noqa: F401
+    reset_local_device_state,
 )
+
+
+async def wait_until(predicate, timeout=5.0):
+    """Poll until predicate() is true, or fail the test."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        if predicate():
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError(f"Condition not met within {timeout}s")
 
 
 @pytest.fixture(autouse=True)
 def setup_mocks(mock_aioresponse):  # noqa: F811
     """Register mock HTTP endpoints for all tests."""
+    reset_local_device_state()
     mock_aioresponse.post(
         f"http://{MOCK_HOST}/api.cgi",
         callback=local_api_callback,
@@ -346,6 +360,92 @@ async def test_local_poll_status_bad_credentials_raises():
 async def test_local_controller_id(local_controller):
     """A successful poll must set the controller id."""
     assert local_controller.controller_id == MOCK_DEVICE_ID.lower()
+
+
+@pytest_asyncio.fixture
+async def fast_local_controller():
+    """A connected local controller with the updater timings compressed.
+
+    The intervals are set before connect() so the updater task never sleeps
+    for the production interval.
+    """
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHomeLocal(
+            MOCK_HOST,
+            MOCK_USER,
+            MOCK_PASS,
+            websession=session,
+        )
+        controller._scan_interval = 0.01
+        controller._max_scan_interval = 0.01
+        controller._unavailable_after = 0.05
+        await controller.connect()
+        yield controller
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_local_reports_disconnected_then_recovers(fast_local_controller):
+    """Regression test for #80 - a device that stops answering after setup
+    must be reported as disconnected once the grace period lapses, and must
+    recover by itself when it starts answering again."""
+    controller = fast_local_controller
+    assert controller.is_connected is True
+
+    LOCAL_DEVICE_STATE["failing"] = True
+    await wait_until(lambda: controller.is_connected is False)
+    assert controller.error_message is not None
+    # The updater must survive the outage, otherwise recovery is impossible.
+    assert not controller._update_task.done()
+
+    LOCAL_DEVICE_STATE["failing"] = False
+    await wait_until(lambda: controller.is_connected is True)
+    assert controller.error_message is None
+
+
+@pytest.mark.asyncio
+async def test_local_updates_last_successful_update(fast_local_controller):
+    """last_successful_update advances while healthy and freezes once the
+    device stops answering."""
+    controller = fast_local_controller
+    first = controller.last_successful_update
+    assert first is not None
+
+    await wait_until(lambda: controller.last_successful_update > first)
+
+    LOCAL_DEVICE_STATE["failing"] = True
+    await wait_until(lambda: controller.is_connected is False)
+    frozen = controller.last_successful_update
+    await asyncio.sleep(0.05)
+    assert controller.last_successful_update == frozen
+
+
+@pytest.mark.asyncio
+async def test_local_stops_updater_when_credentials_rejected(fast_local_controller):
+    """Rejected credentials are not transient, so the updater gives up
+    rather than retrying forever."""
+    controller = fast_local_controller
+
+    LOCAL_DEVICE_STATE["reject_auth"] = True
+    await wait_until(lambda: controller.is_connected is False)
+    await wait_until(lambda: controller._update_task.done())
+    assert controller.error_message is not None
+
+
+@pytest.mark.asyncio
+async def test_local_backs_off_while_failing(fast_local_controller):
+    """The poll interval grows while the device is failing, so a struggling
+    unit is not hammered at the full rate."""
+    controller = fast_local_controller
+    controller._max_scan_interval = 30
+    assert controller._current_scan_interval() == controller._scan_interval
+
+    controller._consecutive_failures = 1
+    assert controller._current_scan_interval() == controller._scan_interval
+    controller._consecutive_failures = 3
+    assert controller._current_scan_interval() == controller._scan_interval * 4
+    controller._consecutive_failures = 500
+    assert controller._current_scan_interval() == 30
 
 
 @pytest.mark.asyncio

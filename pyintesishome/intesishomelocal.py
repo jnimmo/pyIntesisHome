@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from json import JSONDecodeError
 
 import aiohttp
@@ -32,6 +33,19 @@ class IntesisHomeLocal(IntesisBase):
         self._session_id: str = ""
         self._datapoints: dict = {}
         self._scan_interval = 6
+        # Ceiling on the backed-off poll interval while the device is
+        # failing. These units are not powerful, and polling a struggling
+        # one every _scan_interval can make matters worse.
+        self._max_scan_interval = 30
+        # Seconds without a successful poll before the device is reported
+        # as disconnected. Deliberately expressed as elapsed time rather
+        # than a failure count: a failed request can occupy anywhere from
+        # milliseconds (connection refused) to ~20s (two timed-out
+        # attempts), so a count would not map to any fixed grace period.
+        self._unavailable_after = 300
+        self._consecutive_failures = 0
+        self._last_success: float = 0.0
+        self._running = False
         self._device_id: str = ""
         self._values: dict = {}
         self._info: dict = {}
@@ -46,34 +60,100 @@ class IntesisHomeLocal(IntesisBase):
         )
 
     async def _request_values(self) -> dict:
-        """Get all entity values."""
-        response = {}
-        try:
-            response = await self._request(LOCAL_CMD_GET_DP_VALUE, uid="all")
-        except (IHConnectionError, IHAuthenticationError) as exc:
-            _LOGGER.error(
-                "IntesisHome connection error: %s",
-                exc,
-            )
+        """Get all entity values.
+
+        Returns an empty dict if the device answered without values, and
+        raises IHConnectionError or IHAuthenticationError if the request
+        failed outright. Failures are classified by the caller rather than
+        absorbed here, so the updater can tell a transient outage apart
+        from rejected credentials.
+        """
+        response = await self._request(LOCAL_CMD_GET_DP_VALUE, uid="all")
 
         if response and "dpval" in response:
             self._values = {dpval["uid"]: dpval["value"] for dpval in response["dpval"]}
             return self._values
         return {}
 
+    def _current_scan_interval(self) -> float:
+        """Seconds to wait before the next poll, backing off while failing."""
+        if not self._consecutive_failures:
+            return self._scan_interval
+        # Bound the exponent so the intermediate value stays sane during a
+        # long outage. High enough that _max_scan_interval is always what
+        # actually limits the result.
+        exponent = min(self._consecutive_failures - 1, 16)
+        return min(self._scan_interval * 2**exponent, self._max_scan_interval)
+
+    def _register_poll_success(self):
+        """Record a poll that returned values, marking the device reachable."""
+        # Decay rather than reset. A unit that is struggling rather than
+        # dead alternates timeouts and successes, and resetting to zero
+        # would hold it at the full poll rate throughout - exactly when
+        # easing off would help it recover.
+        self._consecutive_failures = max(0, self._consecutive_failures - 1)
+        self._error_message = None
+        self._last_success = self._event_loop.time()
+        self._last_successful_update = datetime.now(timezone.utc)
+        if not self._connected:
+            _LOGGER.info("Reconnected to %s", self._host)
+        self._connected = True
+
+    def _register_poll_failure(self):
+        """Record a failed poll, giving up on the device once the grace
+        period has elapsed."""
+        self._consecutive_failures += 1
+        elapsed = self._event_loop.time() - self._last_success
+        if self._connected and elapsed >= self._unavailable_after:
+            _LOGGER.warning(
+                "No successful update from %s in %.0f seconds, "
+                "reporting it as disconnected",
+                self._host,
+                elapsed,
+            )
+            self._connected = False
+
     async def _run_updater(self):
-        """Run a loop that updates the values every _scan_interval."""
+        """Poll the device every _scan_interval until stop() is called.
+
+        The loop is governed by _running, not _connected: _connected is a
+        reachability signal that goes False after _unavailable_after
+        seconds without a successful poll and True again on the next
+        success. Keeping them separate is what lets a device that recovers
+        do so on its own, without the consumer rebuilding the controller.
+        """
         try:
-            while self._connected:
+            while self._running:
                 try:
                     values = await self._request_values()
-                    for uid, value in values.items():
-                        self._update_device_state(self._device_id, uid, value)
-
+                except IHAuthenticationError as exc:
+                    # Rejected credentials are not transient, so there is
+                    # nothing to be gained by continuing to poll. Mirrors
+                    # the cloud reconnect loop, which also stops on auth
+                    # failure rather than retrying forever.
+                    _LOGGER.error(
+                        "Authentication with %s was rejected, stopping updater: %s",
+                        self._host,
+                        exc,
+                    )
+                    self._error_message = str(exc)
+                    self._connected = False
                     await self._send_update_callback(self._device_id)
+                    return
                 except IHConnectionError as exc:
                     _LOGGER.error("Error during updater task: %s", exc)
-                await asyncio.sleep(self._scan_interval)
+                    self._error_message = str(exc)
+                    values = {}
+
+                if values:
+                    self._register_poll_success()
+                    for uid, value in values.items():
+                        self._update_device_state(self._device_id, uid, value)
+                else:
+                    self._register_poll_failure()
+
+                await self._send_update_callback(self._device_id)
+                await asyncio.sleep(self._current_scan_interval())
         except asyncio.CancelledError:
             _LOGGER.debug("Cancelled the updater task")
         _LOGGER.debug("Updater task is exiting")
@@ -263,13 +343,18 @@ class IntesisHomeLocal(IntesisBase):
         await self.poll_status()
         _LOGGER.debug("Successful authenticated and polled. Fetching Datapoints")
         await self.get_datapoints()
+        self._consecutive_failures = 0
+        self._last_success = self._event_loop.time()
+        self._last_successful_update = datetime.now(timezone.utc)
         self._connected = True
+        self._running = True
         _LOGGER.debug("Starting updater task")
         self._update_task = asyncio.create_task(self._run_updater())
 
     async def stop(self):
         """Disconnect and stop periodic updater."""
         _LOGGER.debug("Stopping updater task")
+        self._running = False
         await self._cancel_task_if_exists(self._update_task)
         self._connected = False
 

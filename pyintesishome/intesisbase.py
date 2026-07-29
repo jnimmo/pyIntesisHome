@@ -4,6 +4,7 @@ import asyncio
 import logging
 from asyncio.exceptions import IncompleteReadError
 from asyncio.streams import StreamReader, StreamWriter
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -50,6 +51,7 @@ class IntesisBase:
         self._keepalive_task: asyncio.Task = None
         self._receive_task: asyncio.Task = None
         self._error_message = None
+        self._last_successful_update = None
         self._web_session = websession
         self._own_session = False
         self._controller_id = None
@@ -142,6 +144,7 @@ class IntesisBase:
                 _LOGGER.debug("Received: %s", data)
 
                 await self._parse_response(data)
+                self._last_successful_update = datetime.now(timezone.utc)
 
                 if not self._received_response.is_set():
                     _LOGGER.debug("Resolving set_value's await")
@@ -639,6 +642,16 @@ class IntesisBase:
     def error_message(self) -> str:
         """Returns the last error message, or None if there were no errors."""
         return self._error_message
+
+    @property
+    def last_successful_update(self) -> datetime:
+        """Returns when data was last received, or None if never.
+
+        A UTC datetime. Consumers can use this to judge staleness on a
+        tighter schedule than is_connected, which only goes False once the
+        controller has given up on the device entirely.
+        """
+        return self._last_successful_update
 
     @property
     def device_type(self) -> str:
