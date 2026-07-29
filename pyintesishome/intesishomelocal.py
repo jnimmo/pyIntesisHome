@@ -79,40 +79,58 @@ class IntesisHomeLocal(IntesisBase):
         _LOGGER.debug("Updater task is exiting")
 
     async def _authenticate(self) -> bool:
-        """Authenticate using username and password."""
+        """Authenticate using username and password.
+
+        Returns True if a session ID was obtained, False if the device
+        answered with something unexpected. Raises IHConnectionError if the
+        device could not be reached at all.
+        """
         payload = {
             "command": LOCAL_CMD_LOGIN,
             "data": {"username": self._username, "password": self._password},
         }
+        timeout = aiohttp.ClientTimeout(total=10)
         try:
             async with self._web_session.post(
-                f"http://{self._host}/api.cgi", json=payload
+                f"http://{self._host}/api.cgi", json=payload, timeout=timeout
             ) as response:
                 if response.status != 200:
                     raise IHConnectionError(
-                        "HTTP response status is unexpected (not 200)"
+                        f"HTTP response status is unexpected for {self._host} "
+                        f"(got {response.status}, want 200)"
                     )
                 json_response = await response.json()
-                # Check if the response has the expected format
-                if (
-                    "data" in json_response
-                    and "id" in json_response["data"]
-                    and "sessionID" in json_response["data"]["id"]
-                ):
-                    self._session_id = json_response["data"]["id"]["sessionID"]
-                    _LOGGER.debug(
-                        "Authenticated with new session ID %s", self._session_id
-                    )
-                else:
-                    _LOGGER.error("Unexpected response format during authentication")
         except (
-            aiohttp.ClientConnectionError,
-            aiohttp.ClientResponseError,
-            aiohttp.ClientPayloadError,
-            aiohttp.ContentTypeError,
+            asyncio.exceptions.TimeoutError,
+            aiohttp.ClientError,
             JSONDecodeError,
         ) as exception:
-            _LOGGER.error("Error during authentication: %s", str(exception))
+            raise IHConnectionError(
+                f"Error during authentication with {self._host}: {exception}"
+            ) from exception
+
+        # Check if the response has the expected format. The device answers a
+        # rejected login with data=None, so don't assume any level is a dict.
+        session_id = ((json_response.get("data") or {}).get("id") or {}).get(
+            "sessionID"
+        )
+        if session_id:
+            self._session_id = session_id
+            _LOGGER.debug("Authenticated with new session ID %s", self._session_id)
+            return True
+
+        error = json_response.get("error") or {}
+        if error.get("code") == 5:
+            raise IHAuthenticationError(
+                f"Authentication with {self._host} was rejected: {error.get('message')}"
+            )
+
+        _LOGGER.error(
+            "Unexpected response format during authentication with %s: %r",
+            self._host,
+            json_response,
+        )
+        return False
 
     async def _request(self, command: str, **kwargs) -> dict:
         """Make a request."""
@@ -121,7 +139,15 @@ class IntesisHomeLocal(IntesisBase):
         while connection_attempts < 2:
             connection_attempts += 1
             if not self._session_id:
-                await self._authenticate()
+                try:
+                    await self._authenticate()
+                except IHConnectionError as exc:
+                    _LOGGER.error(
+                        "IntesisHome authentication error for %s: %s",
+                        self._host,
+                        exc,
+                    )
+                    continue
 
             payload = {
                 "command": command,
@@ -259,17 +285,26 @@ class IntesisHomeLocal(IntesisBase):
         return self._info
 
     async def poll_status(self, sendcallback=False):
-        """Get device info for setup purposes."""
+        """Get device info for setup purposes.
+
+        Raises IHConnectionError if the device could not be reached or did not
+        return usable device information, so that callers can tell a failed
+        poll apart from a successful one.
+        """
         try:
             await self._authenticate()
             info = await self.get_info()
 
             # Extract device_id up to the first space, if there is a space
-            raw_id = info.get("sn")
-            if raw_id:
-                device_id, *_ = raw_id.split(" ")
-                self._device_id = device_id
-                self._controller_id = device_id.lower()
+            raw_id = (info or {}).get("sn")
+            if not raw_id:
+                raise IHConnectionError(
+                    f"No device information returned from {self._host}"
+                )
+
+            device_id, *_ = raw_id.split(" ")
+            self._device_id = device_id
+            self._controller_id = device_id.lower()
 
             self._controller_name = (
                 f"{self._info.get('deviceModel')} ({info.get('ownSSID')})"
@@ -289,8 +324,11 @@ class IntesisHomeLocal(IntesisBase):
 
             if sendcallback:
                 await self._send_update_callback(str(self._device_id))
-        except (IHConnectionError, KeyError) as exception:
-            _LOGGER.error("Error during polling status: %s", str(exception))
+        except KeyError as exception:
+            raise IHConnectionError(
+                f"Unexpected response from {self._host} while polling status: "
+                f"missing key {exception}"
+            ) from exception
 
     def get_mode_list(self, device_id) -> list:
         """Get possible entity modes."""

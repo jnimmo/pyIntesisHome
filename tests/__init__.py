@@ -4,6 +4,9 @@ import pytest
 from aioresponses import CallbackResult, aioresponses
 
 MOCK_HOST = "1.1.1.1"
+# A host with no mocked endpoint registered by default, used to simulate a
+# device that never answers.
+MOCK_UNREACHABLE_HOST = "1.1.1.2"
 MOCK_PASS = "password"
 MOCK_USER = "admin"
 MOCK_DEVICE_ID = "12345"

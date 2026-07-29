@@ -6,13 +6,20 @@ import aiohttp
 import pytest
 import pytest_asyncio
 
-from pyintesishome import IntesisBox, IntesisHome, IntesisHomeLocal
+from pyintesishome import (
+    IHAuthenticationError,
+    IHConnectionError,
+    IntesisBox,
+    IntesisHome,
+    IntesisHomeLocal,
+)
 from pyintesishome.const import API_URL, DEVICE_INTESISHOME
 
 from . import (
     MOCK_DEVICE_ID,
     MOCK_HOST,
     MOCK_PASS,
+    MOCK_UNREACHABLE_HOST,
     MOCK_USER,
     MOCK_VAL_RUN_HOURS,
     cloud_api_callback,
@@ -287,6 +294,58 @@ async def test_get_device(controller):
     result = controller.get_device(MOCK_DEVICE_ID)
     assert isinstance(result, dict)
     assert len(result) > 20
+
+
+@pytest.mark.asyncio
+async def test_local_poll_status_unreachable_raises(mock_aioresponse):  # noqa: F811
+    """Regression test for #79 - an unreachable device must surface as an
+    IHConnectionError, not as a silent success leaving a phantom device keyed
+    by an empty string and an unset controller_id."""
+    mock_aioresponse.post(
+        f"http://{MOCK_UNREACHABLE_HOST}/api.cgi",
+        exception=aiohttp.ServerTimeoutError("Connection timeout to host"),
+        repeat=True,
+    )
+
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHomeLocal(
+            MOCK_UNREACHABLE_HOST,
+            MOCK_USER,
+            MOCK_PASS,
+            websession=session,
+        )
+
+        with pytest.raises(IHConnectionError):
+            await controller.poll_status()
+
+        assert controller.get_devices() == {}
+
+        with pytest.raises(IHConnectionError):
+            await controller.connect()
+
+
+@pytest.mark.asyncio
+async def test_local_poll_status_bad_credentials_raises():
+    """Rejected credentials must raise IHAuthenticationError rather than being
+    logged and reported as a connection problem."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHomeLocal(
+            MOCK_HOST,
+            MOCK_USER,
+            "not-the-password",
+            websession=session,
+        )
+
+        with pytest.raises(IHAuthenticationError):
+            await controller.poll_status()
+
+        assert controller.get_devices() == {}
+
+
+@pytest.mark.asyncio
+async def test_local_controller_id(local_controller):
+    """A successful poll must set the controller id."""
+    assert local_controller.controller_id == MOCK_DEVICE_ID.lower()
 
 
 @pytest.mark.asyncio
