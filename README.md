@@ -39,23 +39,24 @@ climate:
 import asyncio
 from pyintesishome import IntesisHome
 
+
 async def main():
-    controller = IntesisHome('username', 'password', device_type='airconwithme')
+    controller = IntesisHome("username", "password", device_type="airconwithme")
     await controller.connect()
     print(repr(controller.get_devices()))
     # Imagine you have a device with id 12015601252591
-    if not controller.is_on('12015601252591'):
-        await controller.set_power_on('12015601252591')
+    if not controller.is_on("12015601252591"):
+        await controller.set_power_on("12015601252591")
 
-    await controller.set_mode_heat('12015601252591')
-    await controller.set_temperature('12015601252591', 22)
-    await controller.set_fan_speed('12015601252591', 'quiet')
+    await controller.set_mode_heat("12015601252591")
+    await controller.set_temperature("12015601252591", 22)
+    await controller.set_fan_speed("12015601252591", "quiet")
 
     await controller.stop()
 
+
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```
 
 ### Callback-driven example
@@ -66,11 +67,13 @@ Rather than polling, subscribe to state-change notifications with `add_update_ca
 import asyncio
 from pyintesishome import IntesisHome
 
+
 async def on_update(device_id=None):
     print(f"Device {device_id} updated")
 
+
 async def main():
-    controller = IntesisHome('username', 'password', device_type='airconwithme')
+    controller = IntesisHome("username", "password", device_type="airconwithme")
     controller.add_update_callback(on_update)
     await controller.connect()
 
@@ -80,9 +83,9 @@ async def main():
 
     await controller.stop()
 
+
 if __name__ == "__main__":
     asyncio.run(main())
-
 ```
 
 ### Control methods
