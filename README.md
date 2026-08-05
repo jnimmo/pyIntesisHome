@@ -27,7 +27,7 @@ climate:
 
 ## Library usage
 
-- Instantiate the IntesisHome controller device with username and password for the user.intesishome.com website.
+- Instantiate the IntesisHome controller device with username and password for the accloud.intesis.com website.
 - Status can be polled using the poll_status command suggested maximum of once every 5 minutes.
 - Commands are sent using a TCP connection to the API which will then remain open until the connection times out.
 - While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required (check using _is_connected_ property)
