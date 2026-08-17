@@ -10,6 +10,7 @@ MOCK_UNREACHABLE_HOST = "1.1.1.2"
 MOCK_PASS = "password"
 MOCK_USER = "admin"
 MOCK_DEVICE_ID = "12345"
+MOCK_DEVICE_ID_2 = "67890"
 
 MOCK_VAL_POWER_STATE = 0
 MOCK_VAL_MODE = 4
@@ -320,6 +321,11 @@ def cloud_api_callback(url, **kwargs):
                 {"deviceId": MOCK_DEVICE_ID, "uid": 50009, "value": 3},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 50010, "value": 255},
                 {"deviceId": MOCK_DEVICE_ID, "uid": 60002, "value": 204},
+                # A second device, so tests can cover multi-device
+                # installations. Deliberately absent from the "inst" block
+                # below, which also exercises the unregistered-device path.
+                {"deviceId": MOCK_DEVICE_ID_2, "uid": 1, "value": MOCK_VAL_POWER_STATE},
+                {"deviceId": MOCK_DEVICE_ID_2, "uid": 10, "value": MOCK_VAL_TEMP},
             ],
         }
     if "config" in req_cmd:

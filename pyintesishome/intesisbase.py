@@ -52,6 +52,11 @@ class IntesisBase:
         self._receive_task: asyncio.Task = None
         self._error_message = None
         self._last_successful_update = None
+        # How long state cached from the last successful update stays
+        # trustworthy. Governs is_available, which is what consumers should
+        # gate entity availability on. Subclasses that know their own update
+        # cadence override this.
+        self._stale_after = 300
         self._web_session = websession
         self._own_session = False
         self._controller_id = None
@@ -643,8 +648,33 @@ class IntesisBase:
 
     @property
     def is_connected(self) -> bool:
-        """Returns true if the TCP connection is established."""
+        """Returns true if the TCP connection is established.
+
+        This is the raw push-socket state. It is not a reachability
+        signal: a controller can be fully usable over HTTP with no socket
+        at all. Consumers gating entity availability want is_available.
+        """
         return self._connected
+
+    @property
+    def is_available(self) -> bool:
+        """Returns true if the controller has a working path to the device.
+
+        True when either the push socket is up, or an update succeeded
+        recently enough that the cached state is still trustworthy. This
+        is the property to gate entity availability on: it stays True
+        across the socket drops and reconnect backoff that make
+        is_connected flap, so long as HTTP polling is still getting
+        through.
+        """
+        if self._connected:
+            return True
+        if self._last_successful_update is None:
+            return False
+        elapsed = (
+            datetime.now(timezone.utc) - self._last_successful_update
+        ).total_seconds()
+        return elapsed < self._stale_after
 
     @property
     def connection_retries(self) -> int:

@@ -373,6 +373,11 @@ API_URL = {
     DEVICE_INTESISHOME: "https://user.intesishome.com/api.php/get/control",
 }
 
+# Floor on the cloud HTTP poll interval. The endpoint is a third-party
+# service with no published rate limit, and the official app polls at a
+# comparable rate, so this is deliberately conservative.
+POLL_INTERVAL_MIN = 60
+
 # Version string sent with every cloud HTTP request. The official apps send
 # their own versionName here, and the login response carries `forceUpdate` and
 # `lastAppVersion`, so the server has version-gating machinery and an old value
