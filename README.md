@@ -28,10 +28,69 @@ climate:
 ## Library usage
 
 - Instantiate the IntesisHome controller device with username and password for the accloud.intesis.com website.
-- Status can be polled using the poll_status command suggested maximum of once every 5 minutes.
-- Commands are sent using a TCP connection to the API which will then remain open until the connection times out.
-- While the persistent TCP connection is open, status updates are pushed to the device over the socket meaning polling is not required (check using _is_connected_ property)
+- `connect()` authenticates, loads state over HTTPS, and starts a poller. It does **not** open a socket, so start-up doesn't depend on a high port being reachable.
+- State comes from polling the same HTTPS endpoint the mobile app uses, every `poll_interval` seconds.
+- **Commands are the only thing that opens the TCP socket**, because it is the one transport that accepts them. It is opened on demand and reopened by the next command whenever it has died.
+- While that socket is open it also **pushes status**, and polling stands down — so for the duration it is the source of state, not merely a bonus.
 - Callbacks to be notified of state updates can be added with the add_update_callback() method.
+- Use the `is_available` property to decide whether the device is usable — see below.
+
+### How the connection works
+
+The socket runs on a high port that many networks filter outbound, and the API
+drops it periodically even under good conditions. So it is treated as
+disposable rather than as the thing the integration is built on:
+
+- **A keepalive maintains it while it is up**, which is also how a half-dead
+  connection gets noticed — the keepalive write fails and the socket is torn
+  down rather than sitting there looking connected.
+- **Nothing reconnects it.** When it dies, that is not an error to recover
+  from: state carries on over polling, and the next command opens a fresh one.
+- **Polling stands down while a socket is up**, since its pushes already keep
+  state current — so a healthy socket costs no extra API traffic. The keepalive
+  is what makes this safe: a half-dead socket fails its next keepalive and is
+  torn down, bounding how long a zombie connection can suppress polling.
+- **A disconnect triggers an immediate poll** rather than waiting out the
+  interval, so `is_available` doesn't dip in the gap.
+
+| Property | Meaning |
+| --- | --- |
+| `is_connected` | Raw socket state. Usually `False`, since the socket only exists around commands. Not a health signal. |
+| `is_available` | Whether a recent HTTPS poll succeeded (or a socket is up). **This is the one to gate availability on.** |
+
+```python
+controller = IntesisHome(
+    "username",
+    "password",
+    use_socket=True,  # default. False = never open a socket (read-only)
+    poll_interval=120,  # seconds between HTTPS state polls
+)
+```
+
+`poll_interval` is clamped to a 60 second floor to stay a good citizen of a
+third-party API; pass `0` or `None` to disable polling entirely.
+
+#### Limitation: commands require the socket
+
+The cloud HTTPS endpoint appears to be read-only, so sending a command
+(`set_temperature`, `set_power_on`, …) needs the socket. If it cannot be
+established — for example on a network that blocks it outbound — the
+controller still reports state correctly but is effectively **read-only**, and
+the `set_*` methods return `False`.
+
+This is a limitation of what has been implemented, not a proven property of
+the API. `examples/probe_cloud_set.py` establishes that `api.php/get/control`
+has no write command: it dispatches solely on the `cmd` parameter, treats that
+as a map of section names, and echoes unknown sections back as `{"": ""}`
+stubs — identically for `set`, `setdatapointvalue`, `control` and a deliberately
+invented name. Request bodies are ignored, and `POST /api.php/set/control`
+returns HTTP 404.
+
+That result is scoped to one path. The API is path-based, and at least one
+other path does perform writes: the official app activates a scene via
+`POST /api.php/scenes/exe`. Since scene actions are `{deviceId, uid, value}`
+triples — the same shape as a SET — a scene-based write path over HTTPS may
+well be reachable. That has not been investigated yet.
 
 ### Library basic example
 
@@ -77,8 +136,10 @@ async def main():
     controller.add_update_callback(on_update)
     await controller.connect()
 
-    # Keep the connection open to keep receiving pushed updates
-    while controller.is_connected:
+    # Keep running while the device is reachable. is_available rather than
+    # is_connected, so a dropped socket doesn't end the loop while the
+    # library is still getting state over HTTP.
+    while controller.is_available:
         await asyncio.sleep(60)
 
     await controller.stop()

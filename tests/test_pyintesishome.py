@@ -1,6 +1,8 @@
 """Tests for pyintesishome."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
 import pytest
@@ -13,11 +15,12 @@ from pyintesishome import (
     IntesisHome,
     IntesisHomeLocal,
 )
-from pyintesishome.const import API_URL, DEVICE_INTESISHOME
+from pyintesishome.const import API_URL, DEVICE_INTESISHOME, POLL_INTERVAL_MIN
 
 from . import (
     LOCAL_DEVICE_STATE,
     MOCK_DEVICE_ID,
+    MOCK_DEVICE_ID_2,
     MOCK_HOST,
     MOCK_PASS,
     MOCK_UNREACHABLE_HOST,
@@ -29,6 +32,27 @@ from . import (
     mock_aioresponse,  # noqa: F401
     reset_local_device_state,
 )
+
+
+class _FakeResponse:
+    """Stand-in for an aiohttp response, for payloads aioresponses can't
+    easily express because the autouse mock already claims the URL."""
+
+    def __init__(self, payload):
+        self._payload = payload
+
+    async def json(self, content_type=None):
+        return self._payload
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc_info):
+        return False
+
+
+def _json_response(payload):
+    return _FakeResponse(payload)
 
 
 async def wait_until(predicate, timeout=5.0):
@@ -92,6 +116,8 @@ async def cloud_controller():
         )
         await controller.connect()
         yield controller
+        # connect() starts the state poller; stop() is what reaps it.
+        await controller.stop()
 
 
 @pytest.fixture(params=["local", "cloud"])
@@ -300,7 +326,9 @@ async def test_get_preset_mode(controller):
 async def test_get_devices(controller):
     result = controller.get_devices()
     assert isinstance(result, dict)
-    assert len(result) == 1
+    # The local mock is a single unit; the cloud mock is a two-device
+    # installation, so multi-device handling stays covered.
+    assert MOCK_DEVICE_ID in result
 
 
 @pytest.mark.asyncio
@@ -468,3 +496,350 @@ async def test_intesisbox_state_change_fires_update_callback():
 
     assert received == [MOCK_DEVICE_ID]
     await box.stop()
+
+
+# --- Optional socket / HTTP fallback polling -------------------------------
+#
+# The cloud mock's serverPort 19999 is never listening, so every
+# cloud_controller has already been through the "socket failed" path by the
+# time a test sees it. That is exactly the state these tests care about.
+
+
+@pytest.mark.asyncio
+async def test_cloud_is_available_without_socket(cloud_controller):
+    """The whole point of the change: a failed socket must not make the
+    controller look dead when HTTP polling is working fine."""
+    assert cloud_controller.is_connected is False
+    assert cloud_controller.is_available is True
+    assert cloud_controller.get_device(MOCK_DEVICE_ID) is not None
+
+
+@pytest.mark.asyncio
+async def test_cloud_is_available_goes_false_when_state_is_stale(cloud_controller):
+    """Availability is time-boxed: state that stopped refreshing is not
+    trustworthy just because it was once fetched successfully."""
+    cloud_controller._last_successful_update = datetime.now(timezone.utc) - timedelta(
+        seconds=cloud_controller._stale_after + 1
+    )
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_cloud_is_available_false_before_first_update():
+    """No successful update yet means unavailable, not available-by-default."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(MOCK_USER, MOCK_PASS, websession=session)
+        assert controller.is_available is False
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_connect_starts_polling(cloud_controller):
+    """State comes from the poller, so connect() must start it."""
+    assert cloud_controller._poll_task is not None
+    assert not cloud_controller._poll_task.done()
+
+
+@pytest.mark.asyncio
+async def test_connect_does_not_open_a_socket():
+    """Start-up must not depend on a high port being reachable. The socket
+    is opened lazily by the first command, not by connect()."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(MOCK_USER, MOCK_PASS, websession=session)
+        with patch("asyncio.open_connection") as open_connection:
+            await controller.connect()
+
+        open_connection.assert_not_called()
+        assert controller.is_connected is False
+        assert controller.is_available is True
+        assert controller.get_device(MOCK_DEVICE_ID) is not None
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_polls_are_skipped_while_the_socket_is_up(cloud_controller):
+    """A live socket already carries state, so polling stands down. The
+    task stays alive, ready to resume the moment the socket goes."""
+    polls = []
+
+    async def counting_poll(sendcallback=False):
+        polls.append(1)
+
+    with patch.object(cloud_controller, "poll_status", counting_poll):
+        await cloud_controller._parse_response(
+            '{"command":"connect_rsp","data":{"status":"ok"}}'
+        )
+        assert cloud_controller.is_connected is True
+
+        # Restart the poller so it picks up the short interval - the
+        # running one is already inside a wait on the old one, and
+        # changing the attribute alone would make this test vacuous.
+        await cloud_controller._cancel_task_if_exists(cloud_controller._poll_task)
+        cloud_controller._poll_task = None
+        cloud_controller._poll_interval = 0.05
+        cloud_controller._start_poller()
+
+        await asyncio.sleep(0.3)
+        assert polls == [], "must not poll while push is carrying state"
+        assert not cloud_controller._poll_task.done()
+
+        # ...and it resumes the moment the socket is gone.
+        cloud_controller._connected = False
+        await wait_until(lambda: len(polls) >= 1, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_triggers_an_immediate_poll(cloud_controller):
+    """Polling is suppressed while the socket is up, so a drop must pull
+    the next poll forward. Waiting out the interval would flap
+    is_available false in the gap."""
+    cloud_controller._poll_interval = 30  # long enough that a scheduled poll won't fire
+    polls = []
+
+    async def counting_poll(sendcallback=False):
+        polls.append(1)
+
+    with patch.object(cloud_controller, "poll_status", counting_poll):
+        await cloud_controller._parse_response(
+            '{"command":"connect_rsp","data":{"status":"ok"}}'
+        )
+        await asyncio.sleep(0.05)
+        assert polls == []
+
+        cloud_controller._connected = False
+        await cloud_controller._handle_disconnect()
+        await wait_until(lambda: len(polls) == 1, timeout=2.0)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_does_not_reconnect(cloud_controller):
+    """A dropped socket is not an error to recover from - it is reopened
+    by the next command, and polling carries state meanwhile."""
+    cloud_controller._connected = False
+    await cloud_controller._handle_disconnect()
+
+    # Nothing schedules a reconnect any more.
+    assert not hasattr(cloud_controller, "_reconnect_task")
+    assert not cloud_controller._poll_task.done()
+    assert cloud_controller.is_available is True
+
+
+@pytest.mark.asyncio
+async def test_opening_a_socket_starts_a_keepalive(cloud_controller):
+    """A live socket is kept healthy: the keepalive is what turns a
+    half-dead connection into a noticed disconnect."""
+    reader, writer = asyncio.StreamReader(), MagicMock()
+    writer.drain = AsyncMock()
+    writer.wait_closed = AsyncMock()
+
+    async def fake_send_command(_command, wait_for_response=True):
+        # Stand in for the server's connect_rsp.
+        cloud_controller._connected = True
+
+    with patch("asyncio.open_connection", AsyncMock(return_value=(reader, writer))):
+        with patch.object(cloud_controller, "_send_command", fake_send_command):
+            assert await cloud_controller._ensure_socket() is True
+
+    assert cloud_controller._keepalive_task is not None
+    assert not cloud_controller._keepalive_task.done()
+    await cloud_controller._cancel_task_if_exists(cloud_controller._keepalive_task)
+    cloud_controller._keepalive_task = None
+
+
+@pytest.mark.asyncio
+async def test_dead_socket_is_not_reopened_until_a_command(cloud_controller):
+    """The socket must not resurrect itself. Polling covers the gap."""
+    cloud_controller._connected = False
+    with patch("asyncio.open_connection") as open_connection:
+        await cloud_controller._handle_disconnect()
+        await asyncio.sleep(0.05)
+        open_connection.assert_not_called()
+
+    assert cloud_controller.is_available is True
+    assert not cloud_controller._poll_task.done()
+
+
+@pytest.mark.asyncio
+async def test_set_opens_the_socket_on_demand(cloud_controller):
+    """Commands are what open the socket, and a live one is reused."""
+    calls = []
+
+    async def fake_ensure():
+        calls.append(1)
+        cloud_controller._connected = True
+        return True
+
+    with patch.object(cloud_controller, "_ensure_socket", fake_ensure):
+        with patch.object(cloud_controller, "_send_command", return_value=None):
+            cloud_controller._set_ack_timeout = 0.05
+            await cloud_controller.set_power_on(MOCK_DEVICE_ID)
+            await cloud_controller.set_power_off(MOCK_DEVICE_ID)
+
+    # Once per command; _ensure_socket itself short-circuits when up.
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_use_socket_false_never_opens_a_socket():
+    """With the socket disabled the controller must still come up fully
+    populated, on HTTP alone."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, use_socket=False
+        )
+        with patch("asyncio.open_connection") as open_connection:
+            await controller.connect()
+
+        open_connection.assert_not_called()
+        assert controller.is_connected is False
+        assert controller.is_available is True
+        assert controller.get_device(MOCK_DEVICE_ID) is not None
+        assert controller._poll_task is not None
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_poll_interval_is_clamped_to_floor():
+    """Consumers must not be able to hammer a third-party cloud API."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, poll_interval=5
+        )
+        assert controller._poll_interval == POLL_INTERVAL_MIN
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disabled", [0, None])
+async def test_poll_interval_none_disables_the_poller(disabled):
+    """Opting out of polling entirely must leave no poll task behind."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, poll_interval=disabled
+        )
+        assert controller._poll_interval is None
+        await controller.connect()
+        assert controller._poll_task is None
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_poll_status_fires_a_callback_per_device(cloud_controller):
+    """A status list spanning several devices must notify for each. Firing
+    only for the last one leaves every other device showing stale state."""
+    received = []
+
+    async def callback(device_id=None):
+        received.append(device_id)
+
+    cloud_controller.add_update_callback(callback)
+    await cloud_controller.poll_status(sendcallback=True)
+
+    assert sorted(received) == sorted([MOCK_DEVICE_ID, MOCK_DEVICE_ID_2])
+
+
+@pytest.mark.asyncio
+async def test_poll_status_survives_response_without_config(cloud_controller):
+    """The poller calls this on a loop, so a response missing the config
+    block must not take the whole poll down."""
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response({"status": {"status": []}}),
+    ):
+        await cloud_controller.poll_status()
+
+    assert cloud_controller.is_available is True
+
+
+@pytest.mark.asyncio
+async def test_stop_leaves_no_poll_task(cloud_controller):
+    """stop() must reap the poller before the web session closes."""
+    poll_task = cloud_controller._poll_task
+    await cloud_controller.stop()
+
+    assert poll_task.done()
+    assert cloud_controller._poll_task is None
+
+
+@pytest.mark.asyncio
+async def test_set_returns_false_when_socket_is_unavailable(cloud_controller):
+    """SETs need the socket - the cloud HTTP API is read-only. Without one,
+    say so honestly rather than hanging until the ack timeout."""
+    assert cloud_controller.is_connected is False
+
+    result = await cloud_controller.set_power_on(MOCK_DEVICE_ID)
+
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_set_with_use_socket_false_does_not_attempt_connect():
+    """A read-only controller must fail the SET outright, not try to open
+    the socket the caller explicitly disabled."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, use_socket=False
+        )
+        await controller.connect()
+
+        with patch("asyncio.open_connection") as open_connection:
+            result = await controller.set_power_on(MOCK_DEVICE_ID)
+
+        assert result is False
+        open_connection.assert_not_called()
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_offline_device_does_not_count_as_a_successful_update(cloud_controller):
+    """An account whose devices are all offline still answers 200 with a
+    full config block and an empty status list (confirmed against a real
+    capture). That must not keep is_available pinned True forever."""
+    # Shape taken from a Proxyman capture of AC Cloud 3.3.3 against an
+    # account whose only device was offline.
+    offline_payload = {
+        "config": {
+            "token": 1228523849,
+            "serverIP": "212.92.41.143",
+            "serverPort": 5210,
+            "inst": [
+                {
+                    "id": 1,
+                    "name": "First installation",
+                    "devices": [
+                        {
+                            "id": MOCK_DEVICE_ID,
+                            "name": "Manuka",
+                            "modelId": 137,
+                            "widgets": [15, 3, 5, 7, 9, 11, 42, 44, 13, 47, 49, 52],
+                        }
+                    ],
+                }
+            ],
+        },
+        "status": {"hash": "97d170e1550eee4afc0af065b78cda302a97674c", "status": []},
+    }
+
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response(offline_payload),
+    ):
+        await cloud_controller.poll_status()
+
+    # The device is still registered from config...
+    assert cloud_controller.get_device(MOCK_DEVICE_ID) is not None
+    # ...but the poll taught us nothing about it, so it must not refresh
+    # the availability clock.
+    cloud_controller._last_successful_update = datetime.now(timezone.utc) - timedelta(
+        seconds=cloud_controller._stale_after + 1
+    )
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response(offline_payload),
+    ):
+        await cloud_controller.poll_status()
+
+    assert cloud_controller.is_available is False

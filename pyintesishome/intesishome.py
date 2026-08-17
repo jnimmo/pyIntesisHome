@@ -4,11 +4,19 @@ import asyncio
 import json
 import logging
 import socket
+from datetime import datetime, timezone
 from typing import NamedTuple
 
 import aiohttp
 
-from .const import API_OS, API_URL, API_VER, DEVICE_INTESISHOME, INTESIS_CMD_STATUS
+from .const import (
+    API_OS,
+    API_URL,
+    API_VER,
+    DEVICE_INTESISHOME,
+    INTESIS_CMD_STATUS,
+    POLL_INTERVAL_MIN,
+)
 from .exceptions import IHAuthenticationError, IHConnectionError
 from .intesisbase import IntesisBase
 
@@ -43,7 +51,38 @@ class IntesisHome(IntesisBase):
         loop=None,
         websession=None,
         device_type=DEVICE_INTESISHOME,
+        *,
+        use_socket: bool = True,
+        poll_interval: int = 120,
     ):
+        """Construct a cloud controller.
+
+        Commands are the only thing that *opens* the socket, since it is
+        the sole transport that accepts them - but while it is open it is
+        also the state source, and polling stands down for the duration.
+        Outside that window state comes from polling the HTTP endpoint.
+
+        The socket's lifetime is therefore command-scoped: opened on
+        demand by a command, kept healthy by a keepalive for as long as
+        it lives so a half-dead connection is noticed rather than
+        trusted, and reused by follow-up commands. Its status pushes are
+        applied throughout, which is both a latency win and - while
+        polling is stood down - the only thing keeping state current.
+
+        What it is *not* is self-healing. When it dies it stays dead:
+        state carries on over polling and the next command opens a fresh
+        one. That is the deliberate part - the socket runs on a high port
+        many networks filter outbound and the cloud drops it periodically
+        even in good conditions, so reconnecting on a timer produced the
+        availability flapping this design exists to remove.
+
+        :param use_socket: allow the socket to be opened for commands at
+            all. False makes the controller read-only.
+        :param poll_interval: seconds between HTTP state polls. Clamped
+            to a 60s floor to stay a good citizen of a third-party cloud
+            API. Pass 0 or None to disable polling, which leaves state
+            updating only while a socket happens to be open.
+        """
         super().__init__(
             device_type=device_type,
             username=username,
@@ -57,10 +96,32 @@ class IntesisHome(IntesisBase):
         self._cmd_server_port = None
         self._auth_token = None
         self._controller_id = username
-        self._should_reconnect = True
-        self._reconnect_task: asyncio.Task = None
-        self._reconnect_delay_initial = 5
-        self._reconnect_delay_max = 300
+        self._use_socket = use_socket
+        self._stopping = False
+        if poll_interval and poll_interval < POLL_INTERVAL_MIN:
+            _LOGGER.debug(
+                "poll_interval of %ss is below the %ss floor; using %ss",
+                poll_interval,
+                POLL_INTERVAL_MIN,
+                POLL_INTERVAL_MIN,
+            )
+        self._poll_interval = (
+            max(POLL_INTERVAL_MIN, poll_interval) if poll_interval else None
+        )
+        # Tolerate one missed poll before reporting the device unavailable,
+        # plus a margin for a slow request. Without the margin a single
+        # timed-out poll would flap availability, which is the bug this
+        # whole mechanism exists to fix.
+        self._stale_after = (self._poll_interval or 120) * 2 + 60
+        self._poll_task: asyncio.Task = None
+        # Lets a disconnect pull the next poll forward. Without it, state
+        # would sit unrefreshed for up to a full interval after the socket
+        # that had been suppressing polls goes away.
+        self._poll_wakeup: asyncio.Event = asyncio.Event()
+        # poll_status() mutates _auth_token/_cmd_server as a side effect and
+        # the token is single-use, so a poll racing connect() would consume
+        # the credential connect() is about to present.
+        self._poll_lock = asyncio.Lock()
         # SET correlation. The cloud's set_ack frame echoes our seqNo
         # masked to the low byte (seqNo & 0xFF) regardless of whether the
         # SET was applied, clamped, or targeted an invalid uid - there's
@@ -108,6 +169,17 @@ class IntesisHome(IntesisBase):
         return
 
     async def _send_keepalive(self):
+        """Keep the command socket healthy for as long as it is open.
+
+        Two jobs. It stops the server dropping an idle connection, and -
+        more usefully - it is how a half-dead socket gets noticed: the
+        write fails, _send_command closes the writer, and _data_received
+        unwinds into the disconnect path. Without it a TCP half-open
+        would sit there looking connected while carrying nothing.
+
+        This does not resurrect a dead socket; it only maintains a live
+        one. Reopening is the next command's job.
+        """
         try:
             while True:
                 await asyncio.sleep(120)
@@ -119,44 +191,98 @@ class IntesisHome(IntesisBase):
                 # Fire and forget. The cloud doesn't appear to emit a
                 # synthetic response to a get, so waiting on
                 # _received_response would always time out and tear the
-                # socket down. The actual purpose of the keepalive is to
-                # keep bytes flowing; the server's eventual status frame
-                # arrives via _data_received like any other state push.
+                # socket down. The point is to put bytes on the wire; any
+                # reply arrives via _data_received like a normal push.
                 await self._send_command(message, wait_for_response=False)
         except asyncio.CancelledError:
             _LOGGER.debug("Cancelled the keepalive task")
 
-    async def _handle_disconnect(self):
-        """Schedule a reconnect.
+    async def _run_poller(self):
+        """Refresh state over HTTP whenever push isn't carrying it.
 
-        In-flight SET futures are intentionally left pending. The auto-
-        reconnect may bring the socket back within the per-SET timeout
-        and the cloud could still deliver the ack via the new session.
-        Failing the futures here would make every SET that races a
-        transient disconnect look like an instant rejection from the
-        caller's perspective; we'd rather wait for the timeout in
-        _set_value (currently 5s) to express the failure.
+        Polls are skipped while a socket is up, since its pushes are
+        already keeping state current. What makes that safe is the
+        keepalive: a half-dead socket fails its next keepalive write and
+        is torn down, so the window in which a zombie connection can
+        suppress polling is bounded by the keepalive interval rather than
+        being open-ended.
 
-        stop() does fail pending futures, since that's an intentional
-        shutdown and we don't want HA blocking 5s per pending SET on
-        unload.
+        The task itself never stops. It waits on an event with a timeout,
+        so a disconnect can wake it for an immediate poll instead of
+        leaving state unrefreshed until the next scheduled one.
         """
-        if not self._should_reconnect:
+        _LOGGER.debug("Polling %s every %ss", self._device_type, self._poll_interval)
+        try:
+            while True:
+                try:
+                    await asyncio.wait_for(
+                        self._poll_wakeup.wait(), timeout=self._poll_interval
+                    )
+                except asyncio.TimeoutError:
+                    pass
+                self._poll_wakeup.clear()
+
+                if self._connected:
+                    # Push is carrying state; nothing to fetch.
+                    continue
+
+                try:
+                    await self.poll_status(sendcallback=True)
+                except IHAuthenticationError as exc:
+                    # Rejected credentials will not fix themselves.
+                    _LOGGER.error(
+                        "Authentication with %s was rejected while polling; "
+                        "stopping: %s",
+                        self._device_type,
+                        exc,
+                    )
+                    return
+                except IHConnectionError as exc:
+                    # Leave _last_successful_update alone: is_available
+                    # decides for itself when the cached state has gone
+                    # stale, so a single failed poll isn't fatal.
+                    _LOGGER.warning("Poll of %s failed: %s", self._device_type, exc)
+        except asyncio.CancelledError:
+            _LOGGER.debug("Cancelled the poll task")
+
+    def _start_poller(self):
+        """Start the state poller if it isn't already running."""
+        if self._poll_interval is None or self._stopping:
             return
-        if self._reconnect_task and not self._reconnect_task.done():
-            return
-        self._reconnect_task = self._event_loop.create_task(self._reconnect_loop())
+        if self._poll_task is None or self._poll_task.done():
+            self._poll_task = self._event_loop.create_task(self._run_poller())
+
+    async def _handle_disconnect(self):
+        """Deliberately does nothing but log. The socket is disposable.
+
+        The socket exists to carry commands, so there is nothing to
+        reconnect *for* until the next one arrives - and _ensure_socket
+        will open a fresh one then. Polling is unaffected and keeps state
+        flowing, which is why losing the socket is no longer an event the
+        consumer needs to see.
+
+        In-flight SET futures are left pending rather than failed here,
+        so a command that races a drop still has until its own timeout to
+        be acknowledged. stop() does fail them, since that is an
+        intentional shutdown and callers shouldn't block on it.
+        """
+        _LOGGER.debug(
+            "%s command socket closed; it will reopen on the next command",
+            self._device_type,
+        )
+        # Polling was suppressed while the socket was up, so its pushes
+        # were the only thing keeping state fresh. Poll now rather than
+        # waiting out the interval, or availability would flap false in
+        # the gap - the exact behaviour this design exists to remove.
+        self._poll_wakeup.set()
 
     async def stop(self):
-        """Disable reconnect and shut the controller down fully."""
-        self._should_reconnect = False
-        # Cancel reconnect first so it doesn't kick in mid-stop.
-        if self._reconnect_task and not self._reconnect_task.done():
-            self._reconnect_task.cancel()
-            try:
-                await self._reconnect_task
-            except asyncio.CancelledError:
-                pass
+        """Shut the controller down fully."""
+        self._stopping = True
+        # Cancel the poller before super().stop() closes the web session
+        # out from under an in-flight request.
+        await self._cancel_task_if_exists(self._poll_task)
+        self._poll_task = None
         # Fail any pending SETs so awaiting callers don't hang.
         for pending in list(self._pending_set_acks.values()):
             if not pending.future.done():
@@ -164,117 +290,165 @@ class IntesisHome(IntesisBase):
         self._pending_set_acks.clear()
         await super().stop()
 
-    async def _reconnect_loop(self):
-        """Retry connect() with exponential backoff until reconnected or stopped."""
-        delay = self._reconnect_delay_initial
-        while self._should_reconnect and not self._connected:
+    async def _ensure_socket(self) -> bool:
+        """Open the command socket if it isn't already up.
+
+        Returns True if a usable socket exists afterwards. Called only
+        from the command path - nothing else should be opening one.
+        """
+        if self._connected:
+            return True
+        if not self._use_socket:
+            _LOGGER.warning(
+                "Cannot open a socket to %s: use_socket=False", self._device_type
+            )
+            return False
+        if self._connecting:
+            return False
+
+        self._connecting = True
+        try:
+            await self._cancel_task_if_exists(self._receive_task)
+            self._receive_task = None
+
+            # Hold the token locally. It is single-use, and a poll landing
+            # between here and the connect_req below would replace
+            # self._auth_token with one the server has already invalidated.
+            auth_token = await self.poll_status()
+
+            _LOGGER.debug(
+                "Opening command socket to %s at %s:%s",
+                self._device_type,
+                self._cmd_server,
+                self._cmd_server_port,
+            )
             try:
-                await asyncio.sleep(delay)
-            except asyncio.CancelledError:
-                return
-            if not self._should_reconnect:
-                return
-            _LOGGER.info("Reconnecting to %s API", self._device_type)
-            try:
-                await self.connect()
-            except IHAuthenticationError as exc:
-                _LOGGER.error(
-                    "Authentication failure during reconnect to %s; "
-                    "stopping retries: %s",
-                    self._device_type,
-                    exc,
+                self._reader, self._writer = await asyncio.open_connection(
+                    self._cmd_server, self._cmd_server_port
                 )
-                self._should_reconnect = False
-                return
-            except IHConnectionError as exc:
-                _LOGGER.warning("Reconnect to %s failed: %s", self._device_type, exc)
-            except asyncio.CancelledError:
-                return
-            except Exception as exc:  # pylint: disable=broad-exception-caught
-                _LOGGER.error(
-                    "Unexpected error reconnecting to %s: %s",
-                    self._device_type,
-                    exc,
-                )
-            if self._connected:
-                _LOGGER.info("Reconnected to %s API", self._device_type)
-                return
-            delay = min(delay * 2, self._reconnect_delay_max)
-
-    async def connect(self):
-        """Public method for connecting to IntesisHome/Airconwithme API"""
-        if not self._connected and not self._connecting:
-            self._connecting = True
-            self._should_reconnect = True
-            try:
-                self._connection_retries = 0
-
-                # Don't wipe self._devices here. poll_status() overwrites
-                # entries in place and the brief reset-then-repopulate window
-                # is a race against any concurrent consumer that reads
-                # get_devices() while we are awaiting poll_status.
-                await self._cancel_task_if_exists(self._receive_task)
-
-                try:
-                    self._auth_token = await self.poll_status()
-                except IHAuthenticationError as exc:
-                    _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                    raise IHAuthenticationError from exc
-                except IHConnectionError as exc:
-                    _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
-                    raise IHConnectionError from exc
-
-                _LOGGER.debug(
-                    "Opening connection to %s API at %s:%i",
-                    self._device_type,
+            except OSError as exc:
+                _LOGGER.warning(
+                    "Connection to %s:%s failed: %s",
                     self._cmd_server,
                     self._cmd_server_port,
+                    exc,
                 )
-                try:
-                    # Create asyncio socket
-                    self._reader, self._writer = await asyncio.open_connection(
-                        self._cmd_server, self._cmd_server_port
-                    )
-                except OSError as exc:
-                    _LOGGER.warning(
-                        "Connection to %s:%s failed: %s; auto-reconnect will retry",
-                        self._cmd_server,
-                        self._cmd_server_port,
-                        exc,
-                    )
-                    self._connected = False
-                    await self._handle_disconnect()
-                    return
+                return False
 
-                auth_msg = json.dumps(
-                    {"command": "connect_req", "data": {"token": self._auth_token}},
-                    separators=_JSON_SEPARATORS,
+            auth_msg = json.dumps(
+                {"command": "connect_req", "data": {"token": auth_token}},
+                separators=_JSON_SEPARATORS,
+            )
+            self._receive_task = self._event_loop.create_task(self._data_received())
+            await self._send_command(auth_msg)
+            auth_token = None
+            self._auth_token = None
+
+            if not self._connected:
+                _LOGGER.warning(
+                    "Did not receive connect_rsp from %s", self._device_type
                 )
-                self._receive_task = self._event_loop.create_task(self._data_received())
-                await self._send_command(auth_msg)
-                # Clear the OTP
-                self._auth_token = None
+                self._close_writer()
+                return False
 
-                if not self._connected:
-                    _LOGGER.warning(
-                        "Did not receive connect_rsp from %s API; "
-                        "auto-reconnect will retry",
-                        self._device_type,
-                    )
-                    # Close the socket so _data_received exits and triggers
-                    # the disconnect hook (which schedules reconnect).
-                    self._close_writer()
-                    return
+            # Keep this socket healthy while it lives. _data_received's
+            # finally block cancels it on disconnect, and nothing starts
+            # it again until another command opens a new socket.
+            self._keepalive_task = self._event_loop.create_task(self._send_keepalive())
+            return True
+        finally:
+            self._connecting = False
 
-                self._keepalive_task = self._event_loop.create_task(
-                    self._send_keepalive()
-                )
-            finally:
-                self._connecting = False
+    async def connect(self):
+        """Authenticate, load state, and start polling.
+
+        Deliberately does not open the socket. State comes from polling,
+        and the socket is opened lazily by the first command, so start-up
+        no longer depends on a high port being reachable.
+        """
+        self._stopping = False
+        self._connection_retries = 0
+
+        # Don't wipe self._devices here. poll_status() overwrites entries
+        # in place and the brief reset-then-repopulate window is a race
+        # against any concurrent consumer reading get_devices().
+        try:
+            await self.poll_status()
+        except IHAuthenticationError as exc:
+            _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+            raise IHAuthenticationError from exc
+        except IHConnectionError as exc:
+            _LOGGER.error("Error connecting to IntesisHome API: %s", exc)
+            raise IHConnectionError from exc
+
+        self._start_poller()
 
     async def poll_status(self, sendcallback=False):
         """Public method to query IntesisHome for state of device.
-        Notifies subscribers if sendCallback True."""
+        Notifies subscribers if sendCallback True.
+
+        Returns a fresh single-use socket token as a side effect of the
+        same request, which is why connect() calls this first. The token
+        and server address are also stored on the instance, so the call is
+        serialised under _poll_lock to stop a fallback poll from consuming
+        the token a concurrent connect() is about to present.
+        """
+        async with self._poll_lock:
+            return await self._poll_status(sendcallback)
+
+    def _apply_config(self, config):
+        """Store the socket address and token, and register known devices."""
+        if not config:
+            # The poller calls this on a loop, so a response missing the
+            # config block must not take the whole poll down.
+            return
+
+        self._cmd_server = config.get("serverIP")
+        self._cmd_server_port = config.get("serverPort")
+        self._auth_token = config.get("token")
+
+        _LOGGER.debug(
+            "Server: %s:%s, Token: %s",
+            self._cmd_server,
+            self._cmd_server_port,
+            self._auth_token,
+        )
+
+        for installation in config.get("inst") or []:
+            for device in installation.get("devices") or []:
+                self._devices[device["id"]] = {
+                    "name": device["name"],
+                    "widgets": device["widgets"],
+                    "model": device["modelId"],
+                }
+                _LOGGER.debug(repr(self._devices))
+
+    def _apply_statuses(self, status_response) -> list:
+        """Apply the status list, returning the device ids it carried.
+
+        An empty return means the response carried no device state at all,
+        which the caller treats as "the account answered but the hardware
+        is not reporting".
+        """
+        updated_devices = []
+        statuses = (status_response.get("status") or {}).get("status") or []
+        for status in statuses:
+            device_id = str(status["deviceId"])
+
+            # Handle devices which don't appear in installation
+            if device_id not in self._devices:
+                self._devices[device_id] = {
+                    "name": "Device " + device_id,
+                    "widgets": [42],
+                }
+            if device_id not in updated_devices:
+                updated_devices.append(device_id)
+
+            self._update_device_state(device_id, status["uid"], status["value"])
+        return updated_devices
+
+    async def _poll_status(self, sendcallback=False):
+        """Body of poll_status(), called with _poll_lock held."""
         get_status = {
             "username": self._username,
             "password": self._password,
@@ -303,45 +477,37 @@ class IntesisHome(IntesisBase):
                 _LOGGER.error("Error from API %s", repr(self._error_message))
                 raise IHAuthenticationError()
 
-            config = status_response.get("config")
-            if config:
-                self._cmd_server = config.get("serverIP")
-                self._cmd_server_port = config.get("serverPort")
-                self._auth_token = config.get("token")
+            self._apply_config(status_response.get("config"))
+            updated_devices = self._apply_statuses(status_response)
+            self._error_message = None
 
+            # Only an answer that actually carried device state counts as a
+            # successful update. When every device on the account is
+            # offline the cloud still returns 200 with a full config block
+            # and an empty status list - the account is reachable, the
+            # hardware is not. Stamping the timestamp on that would pin
+            # is_available to True forever while serving state that never
+            # refreshes, which is the availability bug this mechanism
+            # exists to fix, only inverted.
+            #
+            # Note this is an account-level signal: in a multi-device
+            # installation one reporting device keeps the controller
+            # available. Per-device liveness would need per-device
+            # timestamps.
+            if updated_devices:
+                self._last_successful_update = datetime.now(timezone.utc)
+            else:
                 _LOGGER.debug(
-                    "Server: %s:%i, Token: %s",
-                    self._cmd_server,
-                    self._cmd_server_port,
-                    self._auth_token,
+                    "%s returned no device state; devices are offline",
+                    self._device_type,
                 )
 
-            # Setup devices
-            for installation in config.get("inst") or []:
-                for device in installation.get("devices") or []:
-                    self._devices[device["id"]] = {
-                        "name": device["name"],
-                        "widgets": device["widgets"],
-                        "model": device["modelId"],
-                    }
-                    _LOGGER.debug(repr(self._devices))
-
-            # Update device status
-            device_id = None
-            for status in status_response["status"]["status"]:
-                device_id = str(status["deviceId"])
-
-                # Handle devices which don't appear in installation
-                if device_id not in self._devices:
-                    self._devices[device_id] = {
-                        "name": "Device " + device_id,
-                        "widgets": [42],
-                    }
-
-                self._update_device_state(device_id, status["uid"], status["value"])
-
-            if sendcallback and device_id is not None:
-                await self._send_update_callback(device_id=device_id)
+            # One callback per device. A status list can span several
+            # devices, and firing only for the last one leaves every other
+            # device in a multi-device installation showing stale state.
+            if sendcallback:
+                for device_id in updated_devices:
+                    await self._send_update_callback(device_id=device_id)
 
         return self._auth_token
 
@@ -362,7 +528,22 @@ class IntesisHome(IntesisBase):
         Multiple SETs can be in flight concurrently. Each gets its own
         seqNo and the cloud echoes it (mod 256). The future stored in
         ``_pending_set_acks[seq]`` is resolved by ``_handle_set_ack``.
+
+        SETs travel over the socket only - the cloud HTTP endpoint this
+        library uses appears to be read-only - so this is the one place
+        that opens one. A controller that cannot establish the socket is
+        read-only, and says so rather than hanging until the ack timeout.
         """
+        if not await self._ensure_socket():
+            _LOGGER.warning(
+                "Cannot send SET to %s: no command socket. Commands need "
+                "outbound access to %s:%s",
+                self._device_type,
+                self._cmd_server,
+                self._cmd_server_port,
+            )
+            return False
+
         seq = self._next_set_seqno()
         fut = self._event_loop.create_future()
         self._pending_set_acks[seq] = _PendingSet(
