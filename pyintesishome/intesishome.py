@@ -24,6 +24,13 @@ class _PendingSet(NamedTuple):
 
 _LOGGER = logging.getLogger("pyintesishome")
 
+# The official app builds its socket frames with String.format, so they carry
+# no whitespace at all. json.dumps defaults to ", " and ": ", which is
+# equivalent to any JSON parser but a different byte sequence on the wire.
+# Match the app exactly, so a server inspecting frame shape sees what it
+# expects from a first-party client.
+_JSON_SEPARATORS = (",", ":")
+
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-positional-arguments, too-many-public-methods
 class IntesisHome(IntesisBase):
@@ -240,7 +247,8 @@ class IntesisHome(IntesisBase):
                     return
 
                 auth_msg = json.dumps(
-                    {"command": "connect_req", "data": {"token": self._auth_token}}
+                    {"command": "connect_req", "data": {"token": self._auth_token}},
+                    separators=_JSON_SEPARATORS,
                 )
                 self._receive_task = self._event_loop.create_task(self._data_received())
                 await self._send_command(auth_msg)
@@ -372,7 +380,8 @@ class IntesisHome(IntesisBase):
                     "value": int(value),
                     "seqNo": seq,
                 },
-            }
+            },
+            separators=_JSON_SEPARATORS,
         )
         try:
             await self._send_command(message, wait_for_response=False)
