@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 import aiohttp
 
-from .const import API_URL, API_VER, DEVICE_INTESISHOME, INTESIS_CMD_STATUS
+from .const import API_OS, API_URL, API_VER, DEVICE_INTESISHOME, INTESIS_CMD_STATUS
 from .exceptions import IHAuthenticationError, IHConnectionError
 from .intesisbase import IntesisBase
 
@@ -272,6 +272,7 @@ class IntesisHome(IntesisBase):
             "password": self._password,
             "cmd": INTESIS_CMD_STATUS,
             "version": self._api_ver,
+            "os": API_OS,
         }
 
         status_response = None

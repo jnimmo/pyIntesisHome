@@ -541,6 +541,19 @@ class IntesisBase:
                 outdoor_temp = twos_complement_16bit(int(outdoor_temp)) / 10
         return outdoor_temp
 
+    def get_tank_water_temperature(self, device_id) -> float:
+        """Public method returns the DHW tank water temperature.
+
+        Sign-extended like the other temperature datapoints. The official
+        app applies two's complement to uid 10, 37 and 45 specifically, so
+        this rounds out the set - reading uid 45 through the generic
+        accessors returns the raw unsigned word, which is wrong below zero.
+        """
+        tank_temp = self.get_device_property(device_id, "tank_water_temperature")
+        if tank_temp is not None:
+            tank_temp = twos_complement_16bit(int(tank_temp)) / 10
+        return tank_temp
+
     def get_max_setpoint(self, device_id) -> float:
         """Public method returns the current maximum target temperature."""
         temperature = self.get_device_property(device_id, "setpoint_max")

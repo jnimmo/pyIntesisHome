@@ -373,11 +373,26 @@ API_URL = {
     DEVICE_INTESISHOME: "https://user.intesishome.com/api.php/get/control",
 }
 
+# Version string sent with every cloud HTTP request. The official apps send
+# their own versionName here, and the login response carries `forceUpdate` and
+# `lastAppVersion`, so the server has version-gating machinery and an old value
+# is a standing risk. Each brand is a separate white-label build of the same
+# Android codebase, where AppConstants.apiVersion tracks that app's versionName:
+#   - IntesisHome: AC Cloud (com.intesis.intesishome), read from the APK and
+#     confirmed against the live endpoint.
+#   - airconwithme: read from the APK (com.intesis.airconwithme).
+#   - anywair: the current Play release (com.intesis.anywair). The 1.6.4 APK
+#     confirms apiVersion tracks versionName for this app too, so 1.7.3 is
+#     what a current install sends. It replaces 2.9, which matched no release
+#     this app has ever had.
 API_VER = {
-    DEVICE_AIRCONWITHME: "1.6.2",
-    DEVICE_ANYWAIR: "2.9",
-    DEVICE_INTESISHOME: "1.2.2",
+    DEVICE_AIRCONWITHME: "2.3.3",
+    DEVICE_ANYWAIR: "1.7.3",
+    DEVICE_INTESISHOME: "3.3.3",
 }
+
+# The official apps always send this alongside the version.
+API_OS = "android"
 
 LOCAL_CMD_LOGIN = "login"
 LOCAL_CMD_GET_INFO = "getinfo"
