@@ -60,9 +60,10 @@ disposable rather than as the thing the integration is built on:
 
 ```python
 controller = IntesisHome(
-    'username', 'password',
-    use_socket=True,     # default. False = never open a socket (read-only)
-    poll_interval=120,   # seconds between HTTPS state polls
+    "username",
+    "password",
+    use_socket=True,  # default. False = never open a socket (read-only)
+    poll_interval=120,  # seconds between HTTPS state polls
 )
 ```
 
