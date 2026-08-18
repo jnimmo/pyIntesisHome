@@ -26,8 +26,8 @@ from . import (
     MOCK_UNREACHABLE_HOST,
     MOCK_USER,
     MOCK_VAL_RUN_HOURS,
+    FakeWMPServer,
     cloud_api_callback,
-    intesisbox_api_callback,
     local_api_callback,
     mock_aioresponse,  # noqa: F401
     reset_local_device_state,
@@ -78,11 +78,6 @@ def setup_mocks(mock_aioresponse):  # noqa: F811
     mock_aioresponse.post(
         f"{API_URL[DEVICE_INTESISHOME]}",
         callback=cloud_api_callback,
-        repeat=True,
-    )
-    mock_aioresponse.post(
-        MOCK_HOST,
-        callback=intesisbox_api_callback,
         repeat=True,
     )
 
@@ -843,3 +838,122 @@ async def test_offline_device_does_not_count_as_a_successful_update(cloud_contro
         await cloud_controller.poll_status()
 
     assert cloud_controller.is_available is False
+
+
+# ---------------------------------------------------------------------------
+# IntesisBox (WMP local protocol) against a fake TCP device
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def wmp_server():
+    """Start a fake WMP device on a random local port."""
+    server = FakeWMPServer()
+    await server.start()
+    yield server
+    await server.stop()
+
+
+@pytest_asyncio.fixture
+async def intesisbox_controller(wmp_server):
+    """Create and connect an IntesisBox controller to the fake device."""
+    controller = IntesisBox("127.0.0.1", loop=asyncio.get_running_loop())
+    controller._port = wmp_server.port
+    # Keep the reconnect tests fast; production defaults are 15/300s.
+    controller._reconnect_delay_initial = 0.1
+    controller._reconnect_delay_max = 0.1
+    await controller.connect()
+    yield controller
+    await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_connect(intesisbox_controller, wmp_server):
+    """Connect initialises despite an unanswered LIMITS:VANELR query."""
+    controller = intesisbox_controller
+    assert controller.is_connected
+
+    device = controller._devices[FakeWMPServer.MAC]
+    assert device["temperature"] == "250"
+    assert device["mode_list"] == ["auto", "heat", "dry", "fan", "cool"]
+    assert "hvane_list" not in device  # LIMITS:VANELR was never answered
+
+    # Every command must be CR-terminated or the device never parses it;
+    # the fake server only records complete CR-terminated lines.
+    assert "ID" in wmp_server.received
+    assert "LIMITS:VANELR" in wmp_server.received
+    assert "GET,1:AMBTEMP" in wmp_server.received
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_starts_keepalive(intesisbox_controller):
+    """connect() starts the keepalive task that guards the idle socket."""
+    task = intesisbox_controller._keepalive_task
+    assert task is not None
+    assert not task.done()
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_set_commands_return_ack(
+    intesisbox_controller, wmp_server
+):
+    """set_* methods report the device's acknowledgement as a boolean."""
+    controller = intesisbox_controller
+
+    assert await controller.set_power_on() is True
+    assert wmp_server.state["ONOFF"] == "ON"
+
+    assert await controller.set_mode(FakeWMPServer.MAC, "heat") is True
+    assert wmp_server.state["MODE"] == "HEAT"
+
+    assert await controller.set_fan_speed(FakeWMPServer.MAC, "3") is True
+    assert wmp_server.state["FANSP"] == "3"
+
+    # A mode the map doesn't know is rejected without touching the device.
+    assert await controller.set_mode(FakeWMPServer.MAC, "bogus") is False
+    assert wmp_server.state["MODE"] == "HEAT"
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_unanswered_set_returns_false(
+    intesisbox_controller, wmp_server
+):
+    """A device that stops answering makes set_* report failure."""
+    controller = intesisbox_controller
+    wmp_server.silent = True
+
+    assert await controller.set_power_on() is False
+
+    # Stop before the fixture teardown so the reconnect loop (kicked off by
+    # the timeout closing the socket) doesn't spin against a silent server.
+    await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_reconnects_after_connection_loss(
+    intesisbox_controller, wmp_server
+):
+    """A dropped socket is re-established and the controller re-initialises."""
+    controller = intesisbox_controller
+
+    await wmp_server.drop_clients()
+    await wait_until(lambda: not controller.is_connected)
+
+    await wait_until(lambda: controller.is_connected)
+    assert await controller.set_power_on() is True
+
+
+@pytest.mark.asyncio
+async def test_intesisbox_stop_suppresses_reconnect(
+    intesisbox_controller, wmp_server
+):
+    """An intentional stop() must not resurrect the connection."""
+    controller = intesisbox_controller
+
+    await controller.stop()
+    await wait_until(lambda: not controller.is_connected)
+    # Give a (fast) reconnect loop every chance to fire if one were started.
+    await asyncio.sleep(0.5)
+
+    assert not controller.is_connected
+    assert controller._reconnect_task is None or controller._reconnect_task.done()

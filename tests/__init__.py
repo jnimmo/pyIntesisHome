@@ -1,5 +1,7 @@
 """Tests for pyintesishome."""
 
+import asyncio
+
 import pytest
 from aioresponses import CallbackResult, aioresponses
 
@@ -43,8 +45,104 @@ def mock_aioresponse():
         yield m
 
 
-def intesisbox_api_callback(url, **kwargs):
-    raise NotImplementedError()
+class FakeWMPServer:
+    """Minimal WMP (IntesisBox) TCP device for tests.
+
+    Speaks the ASCII protocol on a random local port: commands are
+    CR-terminated, replies are CRLF-terminated, SETs are answered with an
+    ACK plus a CHN push. Mirrors a quirk observed on real hardware (an
+    MH-RC-WMP-1 on a ducted unit): a feature the unit does not have gets
+    no reply at all to its LIMITS query, not an ERR. ``silent`` lets a
+    test simulate a device that stops answering entirely.
+    """
+
+    MAC = "AABBCCDDEEFF"
+
+    def __init__(self):
+        self.port = None
+        self.received = []
+        self.raw = b""
+        self.silent = False
+        self.state = {
+            "ONOFF": "OFF",
+            "MODE": "AUTO",
+            "AMBTEMP": "250",
+            "SETPTEMP": "230",
+            "FANSP": "2",
+            "VANEUD": "1",
+        }
+        self._server = None
+        self._writers = []
+
+    async def start(self):
+        self._server = await asyncio.start_server(self._handle, "127.0.0.1", 0)
+        self.port = self._server.sockets[0].getsockname()[1]
+
+    async def stop(self):
+        await self.drop_clients()
+        if self._server:
+            self._server.close()
+            await self._server.wait_closed()
+
+    async def drop_clients(self):
+        """Close all connected clients, simulating a connection loss."""
+        writers, self._writers = self._writers, []
+        for writer in writers:
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                pass
+
+    async def _handle(self, reader, writer):
+        self._writers.append(writer)
+        buffer = b""
+        try:
+            while True:
+                chunk = await reader.read(256)
+                if not chunk:
+                    break
+                self.raw += chunk
+                buffer += chunk
+                while b"\r" in buffer:
+                    line, buffer = buffer.split(b"\r", 1)
+                    command = line.decode("ascii").strip()
+                    if not command:
+                        continue
+                    self.received.append(command)
+                    reply = self._reply(command)
+                    if reply and not self.silent:
+                        writer.write(reply.encode("ascii"))
+                        await writer.drain()
+        except (ConnectionResetError, BrokenPipeError, OSError):
+            pass
+
+    def _reply(self, command):
+        if command == "ID":
+            return (
+                f"ID:MH-RC-WMP-1,{self.MAC},127.0.0.1,ASCII,"
+                "v1.3.3,-51,WMP_TEST,N,1\r\n"
+            )
+        if command.startswith("LIMITS:"):
+            return {
+                "LIMITS:SETPTEMP": "LIMITS:SETPTEMP,[180,300]\r\n",
+                "LIMITS:FANSP": "LIMITS:FANSP,[AUTO,1,2,3,4]\r\n",
+                "LIMITS:MODE": "LIMITS:MODE,[AUTO,HEAT,DRY,FAN,COOL]\r\n",
+                "LIMITS:VANEUD": "LIMITS:VANEUD,[1,2,3,4,SWING]\r\n",
+                # LIMITS:VANELR deliberately absent: silence, like the
+                # real ducted unit.
+            }.get(command)
+        if command.startswith("GET,1:"):
+            function = command.split(":", 1)[1]
+            value = self.state.get(function)
+            if value is None:
+                return None
+            return f"CHN,1:{function},{value}\r\n"
+        if command.startswith("SET,1:"):
+            function, value = command.split(":", 1)[1].split(",", 1)
+            self.state[function] = value
+            return f"ACK\r\nCHN,1:{function},{value}\r\n"
+        return None
 
 
 def local_api_callback(url, **kwargs):

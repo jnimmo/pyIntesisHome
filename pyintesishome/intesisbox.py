@@ -42,6 +42,10 @@ class IntesisBox(IntesisBase):
         self._port = 3310
         self._last_command: str = ""
         self._data_delimiter = b"\r"
+        self._stopped: bool = False
+        self._reconnect_task: asyncio.Task = None
+        self._reconnect_delay_initial: float = 15
+        self._reconnect_delay_max: float = 300
 
     async def connect(self):
         """Public method for making the controller connect."""
@@ -49,6 +53,7 @@ class IntesisBox(IntesisBase):
             _LOGGER.debug("Already connected")
             return
 
+        self._stopped = False
         self._devices = {}
         await self._cancel_task_if_exists(self._receive_task)
 
@@ -59,16 +64,64 @@ class IntesisBox(IntesisBase):
             )
             self._receive_task = asyncio.create_task(self._data_received())
             await asyncio.wait_for(self._initialise_connection(), timeout=60.0)
+            if self._keepalive_task is None or self._keepalive_task.done():
+                self._keepalive_task = asyncio.create_task(self._send_keepalive())
             await self._send_update_callback()
 
         except OSError as exc:  # pylint: disable=broad-except
             _LOGGER.debug("Exception opening connection")
             _LOGGER.error("%s Exception. %s / %s", type(exc), repr(exc.args), exc)
 
+    async def stop(self):
+        """Shut down connectivity and suppress the reconnect loop."""
+        self._stopped = True
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+        await super().stop()
+
+    async def _handle_disconnect(self):
+        """Schedule a reconnect after an unexpected socket loss."""
+        if self._stopped:
+            return
+        if self._reconnect_task and not self._reconnect_task.done():
+            return
+        self._reconnect_task = asyncio.create_task(self._reconnect())
+
+    async def _reconnect(self):
+        """Reconnect with capped exponential backoff until connected."""
+        delay = self._reconnect_delay_initial
+        while not self._stopped and not self._connected:
+            _LOGGER.info(
+                "Connection to %s lost; reconnecting in %s seconds",
+                self._device_type,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            if self._stopped:
+                return
+            try:
+                await self.connect()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                _LOGGER.debug("Reconnect attempt failed: %s", exc)
+            delay = min(delay * 2, self._reconnect_delay_max)
+        if self._connected:
+            _LOGGER.info("Reconnected to %s", self._device_type)
+
+    async def _send_command(self, command: str, wait_for_response: bool = True) -> bool:
+        """Send a WMP command, ensuring the CR terminator the protocol requires."""
+        if not command.endswith("\r"):
+            command += "\r"
+        return await super()._send_command(command, wait_for_response)
+
     async def _initialise_connection(self):
         """Requests the current state of the device"""
         for init_cmd in INTESISBOX_INIT:
-            await self._send_command(init_cmd)
+            # A device without a feature never answers that feature's LIMITS
+            # query (e.g. a ducted unit is silent on LIMITS:VANELR), so don't
+            # block on a reply that may legitimately never come.
+            await self._send_command(
+                init_cmd, wait_for_response=not init_cmd.startswith("LIMITS:")
+            )
 
         initialized = False
 
@@ -157,10 +210,11 @@ class IntesisBox(IntesisBase):
             elif function == INTESISBOX_CMD_VANELR:
                 self._devices[self._device_id]["hvane_list"] = values
 
-    async def set_mode(self, device_id, mode: str):
+    async def set_mode(self, device_id, mode: str) -> bool:
         """Internal method for setting the mode with a string value."""
-        if mode in INTESISBOX_MODE_MAP:
-            await self._set_value(device_id, "MODE", INTESISBOX_MODE_MAP[mode])
+        if mode not in INTESISBOX_MODE_MAP:
+            return False
+        return await self._set_value(device_id, "MODE", INTESISBOX_MODE_MAP[mode])
 
     async def _request_values(self) -> dict:
         """Get all entity values."""
@@ -170,7 +224,12 @@ class IntesisBox(IntesisBase):
         # return self._values
 
     async def _send_keepalive(self):
-        """Run a loop that updates the values every _scan_interval."""
+        """Run a loop that refreshes the ambient temperature every 30s.
+
+        Besides keeping the (otherwise idle) socket alive, the blocking wait
+        in _send_command doubles as a dead-socket detector: a missed reply
+        closes the writer, which drives the disconnect/reconnect path.
+        """
         try:
             while True:
                 await asyncio.sleep(30)
@@ -182,35 +241,35 @@ class IntesisBox(IntesisBase):
         """Authenticate using username and password."""
         raise NotImplementedError()
 
-    async def _set_value(self, device_id, uid, value):
+    async def _set_value(self, device_id, uid, value) -> bool:
         """Internal method to send a command to the API"""
-        command = f"SET,1:{uid},{value}\r"
-        await self._send_command(command)
+        command = f"SET,1:{uid},{value}"
+        return await self._send_command(command)
 
-    async def set_power_off(self, device_id=None):
+    async def set_power_off(self, device_id=None) -> bool:
         """Public method to turn off the device asynchronously."""
-        await self._set_value(device_id, INTESISBOX_CMD_ONOFF, "OFF")
+        return await self._set_value(device_id, INTESISBOX_CMD_ONOFF, "OFF")
 
-    async def set_power_on(self, device_id=None):
+    async def set_power_on(self, device_id=None) -> bool:
         """Public method to turn on the device asynchronously."""
-        await self._set_value(device_id, INTESISBOX_CMD_ONOFF, "ON")
+        return await self._set_value(device_id, INTESISBOX_CMD_ONOFF, "ON")
 
-    async def set_temperature(self, device_id, setpoint):
+    async def set_temperature(self, device_id, setpoint) -> bool:
         """Public method for setting the temperature"""
         set_temp = uint32(setpoint * 10)
-        await self._set_value(device_id, INTESISBOX_CMD_SETPOINT, set_temp)
+        return await self._set_value(device_id, INTESISBOX_CMD_SETPOINT, set_temp)
 
-    async def set_fan_speed(self, device_id, fan: str):
+    async def set_fan_speed(self, device_id, fan: str) -> bool:
         """Public method to set the fan speed"""
-        await self._set_value(device_id, INTESISBOX_CMD_FANSP, fan)
+        return await self._set_value(device_id, INTESISBOX_CMD_FANSP, fan)
 
-    async def set_vertical_vane(self, device_id, vane: str):
+    async def set_vertical_vane(self, device_id, vane: str) -> bool:
         """Public method to set the vertical vane"""
-        await self._set_value(device_id, INTESISBOX_CMD_VANEUD, vane)
+        return await self._set_value(device_id, INTESISBOX_CMD_VANEUD, vane)
 
-    async def set_horizontal_vane(self, device_id, vane: str):
+    async def set_horizontal_vane(self, device_id, vane: str) -> bool:
         """Public method to set the horizontal vane"""
-        await self._set_value(device_id, INTESISBOX_CMD_VANELR, vane)
+        return await self._set_value(device_id, INTESISBOX_CMD_VANELR, vane)
 
     async def poll_status(self, sendcallback=False):
         if self._connected:

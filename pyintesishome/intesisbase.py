@@ -82,37 +82,43 @@ class IntesisBase:
         """Internal method to send a value to the device."""
         raise NotImplementedError()
 
-    async def _send_command(self, command: str, wait_for_response: bool = True):
+    async def _send_command(self, command: str, wait_for_response: bool = True) -> bool:
         """Write a command to the socket.
 
         If ``wait_for_response`` is True (the default), block up to 5s for any
         incoming message to set ``_received_response``. Note this is not a
         per-command correlation — any frame arriving on the socket satisfies
-        the wait — so concurrent callers race. The keepalive should pass
-        ``wait_for_response=False`` since its sole purpose is to put bytes on
-        the wire; the server's reply is treated as a normal state push by
-        ``_data_received``.
+        the wait — so concurrent callers race. Callers that expect no reply
+        (or a reply the device may legitimately never send) should pass
+        ``wait_for_response=False``; whatever does come back is treated as a
+        normal state push by ``_data_received``.
+
+        Returns True when the command was written (and, if waiting, a frame
+        arrived in time); False when there is no writer, the write failed, or
+        the response window timed out.
         """
         try:
             _LOGGER.debug("Sending command %s", command)
             if wait_for_response:
                 self._received_response.clear()
-            if self._writer:
-                self._writer.write(command.encode("ascii"))
-                await self._writer.drain()
-                if not wait_for_response:
-                    return
-                timeout = 5.0
-                start_time = asyncio.get_event_loop().time()
-                while not self._received_response.is_set():
-                    if asyncio.get_event_loop().time() - start_time > timeout:
-                        _LOGGER.error(
-                            "Timeout waiting for response from %s; closing socket",
-                            self._device_type,
-                        )
-                        self._close_writer()
-                        break
-                    await asyncio.sleep(0.1)
+            if not self._writer:
+                return False
+            self._writer.write(command.encode("ascii"))
+            await self._writer.drain()
+            if not wait_for_response:
+                return True
+            timeout = 5.0
+            start_time = asyncio.get_event_loop().time()
+            while not self._received_response.is_set():
+                if asyncio.get_event_loop().time() - start_time > timeout:
+                    _LOGGER.error(
+                        "Timeout waiting for response from %s; closing socket",
+                        self._device_type,
+                    )
+                    self._close_writer()
+                    return False
+                await asyncio.sleep(0.1)
+            return True
         except OSError as exc:
             _LOGGER.error(
                 "%s Exception sending command: %s",
@@ -120,9 +126,11 @@ class IntesisBase:
                 exc,
             )
             self._close_writer()
+            return False
         except Exception as exc:  # pylint: disable=broad-exception-caught
             _LOGGER.error("Unexpected error sending command: %s", exc)
             self._close_writer()
+            return False
 
     def _close_writer(self):
         """Close the writer without tearing down tasks or session.
