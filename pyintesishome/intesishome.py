@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import re
 import socket
 from datetime import datetime, timezone
 from typing import NamedTuple
@@ -19,6 +20,8 @@ from .const import (
     DEVICE_INTESISHOME,
     INTESIS_CMD_STATUS,
     POLL_INTERVAL_MIN,
+    PORTAL_URL,
+    SOCKET_CONNECT_TIMEOUT,
 )
 from .exceptions import IHAuthenticationError, IHConnectionError
 from .intesisbase import IntesisBase
@@ -41,6 +44,14 @@ _LOGGER = logging.getLogger("pyintesishome")
 # Match the app exactly, so a server inspecting frame shape sees what it
 # expects from a first-party client.
 _JSON_SEPARATORS = (",", ":")
+
+# The web portal's login page and post-login panel are server-rendered HTML.
+# These pull the two values the command fallback needs out of it: the CSRF
+# token from the login form, and the account's userId, which only appears in
+# the panel JS once a login has succeeded.
+_PORTAL_CSRF_RE = re.compile(r'name="signin\[_csrf_token\]"[^>]*value="([^"]+)"')
+_PORTAL_USERID_RE = re.compile(r"userId=(\d+)")
+_PORTAL_XHR_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
 
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-positional-arguments, too-many-public-methods
@@ -142,6 +153,13 @@ class IntesisHome(IntesisBase):
         self._set_seq_counter = -1
         self._pending_set_acks: dict[int, _PendingSet] = {}
         self._set_ack_timeout = 5.0
+        # Command fallback via the brand's web portal, used when the
+        # socket cannot be opened. Gets its own session (created lazily,
+        # closed in stop()) so the portal's login cookies never land in a
+        # caller-supplied shared session.
+        self._portal_session: aiohttp.ClientSession = None
+        self._portal_user_id: str = None
+        self._portal_lock = asyncio.Lock()
 
     async def _parse_response(self, decoded_data):
         _LOGGER.debug("%s API Received: %s", self._device_type, decoded_data)
@@ -299,6 +317,9 @@ class IntesisHome(IntesisBase):
             if not pending.future.done():
                 pending.future.set_result(False)
         self._pending_set_acks.clear()
+        if self._portal_session and not self._portal_session.closed:
+            await self._portal_session.close()
+            self._portal_session = None
         await super().stop()
 
     async def _ensure_socket(self) -> bool:
@@ -334,15 +355,21 @@ class IntesisHome(IntesisBase):
                 self._cmd_server_port,
             )
             try:
-                self._reader, self._writer = await asyncio.open_connection(
-                    self._cmd_server, self._cmd_server_port
+                # Bound the attempt: a filtered port takes a full kernel
+                # TCP timeout (~130s) to fail, and every command would pay
+                # it before discovering the socket is unusable.
+                self._reader, self._writer = await asyncio.wait_for(
+                    asyncio.open_connection(
+                        self._cmd_server, self._cmd_server_port
+                    ),
+                    timeout=SOCKET_CONNECT_TIMEOUT,
                 )
-            except OSError as exc:
+            except (OSError, asyncio.TimeoutError) as exc:
                 _LOGGER.warning(
                     "Connection to %s:%s failed: %s",
                     self._cmd_server,
                     self._cmd_server_port,
-                    exc,
+                    exc or f"timed out after {SOCKET_CONNECT_TIMEOUT}s",
                 )
                 return False
 
@@ -554,12 +581,17 @@ class IntesisHome(IntesisBase):
         seqNo and the cloud echoes it (mod 256). The future stored in
         ``_pending_set_acks[seq]`` is resolved by ``_handle_set_ack``.
 
-        SETs travel over the socket only - the cloud HTTP endpoint this
-        library uses appears to be read-only - so this is the one place
-        that opens one. A controller that cannot establish the socket is
-        read-only, and says so rather than hanging until the ack timeout.
+        SETs normally travel over the socket - the cloud HTTP endpoint
+        this library uses is read-only - so this is the one place that
+        opens one. When the socket cannot be established, the SET is
+        attempted through the brand's web portal instead (see
+        ``_portal_set_value``); only if both paths fail is the
+        controller effectively read-only, and it says so rather than
+        hanging until the ack timeout.
         """
         if not await self._ensure_socket():
+            if await self._portal_set_value(device_id, uid, value):
+                return True
             _LOGGER.warning(
                 "Cannot send SET to %s: no command socket. Commands need "
                 "outbound access to %s:%s",
@@ -603,6 +635,102 @@ class IntesisHome(IntesisBase):
             return False
         finally:
             self._pending_set_acks.pop(seq, None)
+
+    async def _portal_set_value(self, device_id, uid, value) -> bool:
+        """Send a SET through the brand's web portal.
+
+        Fallback for when the command socket cannot be opened. The web
+        portal delivers commands over plain HTTPS - a logged-in session
+        POSTs to /device/setVal with the same uid/value datapoints the
+        socket protocol uses - and it kept working through the August
+        2026 outage that left the socket server unreachable for days
+        while the HTTP API stayed up (hass-intesishome#68).
+
+        Returns True if the portal answered OK. Never raises: any
+        failure logs a warning, drops the cached login so the next
+        attempt starts fresh, and returns False so the caller can report
+        the SET as unacknowledged.
+        """
+        if self._device_type not in PORTAL_URL:
+            return False
+        async with self._portal_lock:
+            try:
+                if self._portal_user_id is None:
+                    await self._portal_login()
+                if await self._portal_post_set(device_id, uid, value):
+                    return True
+                # A non-OK answer with a cached login usually means the
+                # session expired: retry once with a fresh one.
+                await self._portal_login()
+                return await self._portal_post_set(device_id, uid, value)
+            except (
+                aiohttp.ClientError,
+                asyncio.TimeoutError,
+                OSError,
+                IHAuthenticationError,
+                IHConnectionError,
+            ) as exc:
+                _LOGGER.warning("Portal command fallback failed: %s", exc)
+                self._portal_user_id = None
+                return False
+
+    async def _portal_login(self) -> None:
+        """Log in to the web portal and cache the account's userId.
+
+        The portal is a server-rendered web app, so this speaks its
+        form-login flow: fetch the login page for the CSRF token, POST
+        the credentials the controller already holds, then read the
+        userId out of the post-login panel. The userId is only rendered
+        for an authenticated session, so finding it doubles as the
+        success check.
+        """
+        if self._portal_session is None or self._portal_session.closed:
+            self._portal_session = aiohttp.ClientSession(
+                headers={"User-Agent": "Mozilla/5.0"}
+            )
+        base = PORTAL_URL[self._device_type]
+        async with self._portal_session.get(f"{base}/login") as resp:
+            login_page = await resp.text()
+        match = _PORTAL_CSRF_RE.search(login_page)
+        if not match:
+            raise IHConnectionError("Portal login page carried no CSRF token")
+        form = {
+            "signin[username]": self._username,
+            "signin[password]": self._password,
+            "signin[_csrf_token]": match.group(1),
+        }
+        async with self._portal_session.post(f"{base}/login", data=form) as resp:
+            await resp.text()
+        async with self._portal_session.get(
+            f"{base}/panel/headers", headers=_PORTAL_XHR_HEADERS
+        ) as resp:
+            panel = await resp.text()
+        match = _PORTAL_USERID_RE.search(panel)
+        if not match:
+            raise IHAuthenticationError("Portal login failed")
+        self._portal_user_id = match.group(1)
+        _LOGGER.debug("Portal login succeeded, userId=%s", self._portal_user_id)
+
+    async def _portal_post_set(self, device_id, uid, value) -> bool:
+        """POST one SET to the portal. True on an OK answer."""
+        base = PORTAL_URL[self._device_type]
+        url = (
+            f"{base}/device/setVal?id={int(device_id)}"
+            f"&uid={int(uid)}&value={int(value)}"
+            f"&userId={self._portal_user_id}"
+        )
+        async with self._portal_session.post(
+            url, headers=_PORTAL_XHR_HEADERS
+        ) as resp:
+            body = (await resp.text()).strip()
+        if body == "OK":
+            _LOGGER.info(
+                "SET uid=%s value=%s sent via the web portal (no socket)",
+                uid,
+                value,
+            )
+            return True
+        return False
 
     def _next_set_seqno(self) -> int:
         """Allocate a SET seqNo in the 0..255 range.
