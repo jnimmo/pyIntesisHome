@@ -373,6 +373,20 @@ API_URL = {
     DEVICE_INTESISHOME: "https://user.intesishome.com/api.php/get/control",
 }
 
+# Web portal base URL per brand, used as a command fallback when the push
+# socket cannot be opened: the portal delivers SETs over plain HTTPS
+# (POST /device/setVal with a logged-in session). Only brands whose portal
+# flow has been verified are listed; user.intesishome.com redirects its
+# login to accloud.intesis.com, which is where the flow actually lives.
+PORTAL_URL = {
+    DEVICE_INTESISHOME: "https://accloud.intesis.com",
+}
+
+# Cap on opening the command socket. Connecting to a filtered port takes a
+# full kernel TCP timeout (~130s) to fail, and every command would pay it
+# in full before discovering the socket is unusable.
+SOCKET_CONNECT_TIMEOUT = 5
+
 # Floor on the cloud HTTP poll interval. The endpoint is a third-party
 # service with no published rate limit, and the official app polls at a
 # comparable rate, so this is deliberately conservative.

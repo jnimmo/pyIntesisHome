@@ -1,6 +1,7 @@
 """Tests for pyintesishome."""
 
 import asyncio
+import re
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +16,12 @@ from pyintesishome import (
     IntesisHome,
     IntesisHomeLocal,
 )
-from pyintesishome.const import API_URL, DEVICE_INTESISHOME, POLL_INTERVAL_MIN
+from pyintesishome.const import (
+    API_URL,
+    DEVICE_INTESISHOME,
+    POLL_INTERVAL_MIN,
+    PORTAL_URL,
+)
 
 from . import (
     LOCAL_DEVICE_STATE,
@@ -957,3 +963,48 @@ async def test_intesisbox_stop_suppresses_reconnect(
 
     assert not controller.is_connected
     assert controller._reconnect_task is None or controller._reconnect_task.done()
+
+
+@pytest.mark.asyncio
+async def test_set_value_falls_back_to_portal_when_socket_is_down(
+    cloud_controller, mock_aioresponse  # noqa: F811
+):
+    """With the command socket unreachable, SETs go through the web portal.
+
+    The mocked cloud config points the socket at 127.0.0.1:19999 where
+    nothing listens, so _ensure_socket fails naturally and _set_value
+    takes the portal path: form login (CSRF token from the login page,
+    userId from the post-login panel), then POST /device/setVal.
+    """
+    portal = PORTAL_URL[DEVICE_INTESISHOME]
+    mock_aioresponse.get(
+        f"{portal}/login",
+        body='<input type="hidden" name="signin[_csrf_token]" '
+        'value="tok123" id="signin__csrf_token" />',
+        repeat=True,
+    )
+    mock_aioresponse.post(f"{portal}/login", body="", repeat=True)
+    mock_aioresponse.get(
+        f"{portal}/panel/headers",
+        body="url: '/device/setVal?id=' + deviceId + '&uid=' + uid"
+        " + '&value=' + value + '&userId=4242',",
+        repeat=True,
+    )
+    mock_aioresponse.post(
+        re.compile(re.escape(f"{portal}/device/setVal") + r"\?.*userId=4242.*"),
+        body="OK",
+        repeat=True,
+    )
+
+    assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is True
+
+
+@pytest.mark.asyncio
+async def test_portal_fallback_failure_reports_set_as_failed(
+    cloud_controller, mock_aioresponse  # noqa: F811
+):
+    """A portal that rejects the login must fail the SET, not raise."""
+    portal = PORTAL_URL[DEVICE_INTESISHOME]
+    mock_aioresponse.get(f"{portal}/login", body="maintenance page", repeat=True)
+
+    assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is False

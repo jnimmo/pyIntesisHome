@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+**Web portal command fallback.** When the command socket cannot be opened,
+the cloud (`IntesisHome`) controller now sends SETs the way the
+accloud.intesis.com web portal does: a form login over HTTPS followed by
+`POST /device/setVal` with the same uid/value datapoints the socket protocol
+uses. Motivated by the August 2026 outage, where the socket server was
+unreachable for days while both the HTTP API and the portal kept working
+([hass-intesishome#68](https://github.com/jnimmo/hass-intesishome/issues/68)),
+leaving the integration read-only. The portal session lives in its own
+`aiohttp` session (closed by `stop()`), logs in lazily on first use, and
+retries once with a fresh login when its session expires. Normal socket
+operation resumes automatically as soon as the socket can be opened again.
+
+**Bounded socket connect (`SOCKET_CONNECT_TIMEOUT`, 5s).** Opening the
+command socket previously paid a full kernel TCP timeout (~130s) when the
+port was filtered, and every SET waited it out before failing. The attempt
+is now capped, so commands fall back (or fail) in seconds.
+
 ## 2.3.0
 
 Reworks the cloud (`IntesisHome`) controller so that state comes from HTTPS
