@@ -382,6 +382,20 @@ PORTAL_URL = {
     DEVICE_INTESISHOME: "https://accloud.intesis.com",
 }
 
+# Sent as the User-Agent on the portal fallback's requests. Unlike the app
+# API above, the portal is a browser-facing web app, so this is an ordinary
+# current desktop browser string rather than an app identifier. Static, so
+# it ages - bump it when it starts looking implausible.
+PORTAL_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
+
+# Cap on the whole portal exchange (login plus setVal). aiohttp defaults to
+# 300s, which would strand a command - and everything queued behind the
+# portal lock - for far longer than the socket path it stands in for.
+PORTAL_TIMEOUT = 20
+
 # Cap on opening the command socket. Connecting to a filtered port takes a
 # full kernel TCP timeout (~130s) to fail, and every command would pay it
 # in full before discovering the socket is unusable.
