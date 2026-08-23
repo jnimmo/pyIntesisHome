@@ -10,7 +10,10 @@ from typing import NamedTuple
 import aiohttp
 
 from .const import (
+    API_APP_NAME,
     API_OS,
+    API_OS_VERSION,
+    API_UA_SCALE,
     API_URL,
     API_VER,
     DEVICE_INTESISHOME,
@@ -92,6 +95,14 @@ class IntesisHome(IntesisBase):
         )
         self._api_url = API_URL[device_type]
         self._api_ver = API_VER[device_type]
+        # The cloud API sets a session cookie (observed: a Symfony PHP
+        # session, e.g. "symfony=..."), presumably for backend session
+        # affinity. Tracked here rather than relied upon from the session's
+        # own cookie jar, since callers commonly hand in an external
+        # aiohttp.ClientSession (e.g. Home Assistant's shared session, whose
+        # jar is a DummyCookieJar by design) that would otherwise silently
+        # drop it.
+        self._cookies: dict = {}
         self._cmd_server = None
         self._cmd_server_port = None
         self._auth_token = None
@@ -455,13 +466,27 @@ class IntesisHome(IntesisBase):
             "cmd": INTESIS_CMD_STATUS,
             "version": self._api_ver,
             "os": API_OS,
+            "osVersion": API_OS_VERSION,
         }
+        user_agent = (
+            f"{API_APP_NAME[self._device_type]}/{self._api_ver} "
+            f"(iPhone; iOS {API_OS_VERSION}; Scale/{API_UA_SCALE})"
+        )
 
         status_response = None
         try:
             async with self._web_session.post(
-                url=self._api_url, data=get_status
+                url=self._api_url,
+                data=get_status,
+                headers={"User-Agent": user_agent},
+                cookies=self._cookies,
             ) as resp:
+                # Sent explicitly above rather than left to the session's own
+                # cookie jar (see the note on self._cookies), so captured
+                # here the same way regardless of what jar, if any, the
+                # session actually has.
+                for name, morsel in resp.cookies.items():
+                    self._cookies[name] = morsel.value
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)
         except aiohttp.client_exceptions.ClientConnectorError as exc:
