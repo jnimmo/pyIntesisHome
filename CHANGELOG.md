@@ -12,9 +12,15 @@ uses. Motivated by the August 2026 outage, where the socket server was
 unreachable for days while both the HTTP API and the portal kept working
 ([hass-intesishome#68](https://github.com/jnimmo/hass-intesishome/issues/68)),
 leaving the integration read-only. The portal session lives in its own
-`aiohttp` session (closed by `stop()`), logs in lazily on first use, and
-retries once with a fresh login when its session expires. Normal socket
-operation resumes automatically as soon as the socket can be opened again.
+`aiohttp` session (closed by `stop()`, along with the cached login), logs in
+lazily on first use, retries once with a fresh login when its session
+expires, and is bounded by `PORTAL_TIMEOUT` (20s) so a stalled portal cannot
+hold up the commands queued behind it. Normal socket operation resumes
+automatically as soon as the socket can be opened again.
+
+`use_socket=False` is exempt. That setting means "read-only controller", so
+it disables the portal fallback too rather than quietly regaining the
+ability to send commands over HTTPS.
 
 **Bounded socket connect (`SOCKET_CONNECT_TIMEOUT`, 5s).** Opening the
 command socket previously paid a full kernel TCP timeout (~130s) when the

@@ -120,8 +120,7 @@ class FakeWMPServer:
     def _reply(self, command):
         if command == "ID":
             return (
-                f"ID:MH-RC-WMP-1,{self.MAC},127.0.0.1,ASCII,"
-                "v1.3.3,-51,WMP_TEST,N,1\r\n"
+                f"ID:MH-RC-WMP-1,{self.MAC},127.0.0.1,ASCII,v1.3.3,-51,WMP_TEST,N,1\r\n"
             )
         if command.startswith("LIMITS:"):
             return {

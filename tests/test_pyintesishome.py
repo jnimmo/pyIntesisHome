@@ -904,9 +904,7 @@ async def test_intesisbox_starts_keepalive(intesisbox_controller):
 
 
 @pytest.mark.asyncio
-async def test_intesisbox_set_commands_return_ack(
-    intesisbox_controller, wmp_server
-):
+async def test_intesisbox_set_commands_return_ack(intesisbox_controller, wmp_server):
     """set_* methods report the device's acknowledgement as a boolean."""
     controller = intesisbox_controller
 
@@ -954,9 +952,7 @@ async def test_intesisbox_reconnects_after_connection_loss(
 
 
 @pytest.mark.asyncio
-async def test_intesisbox_stop_suppresses_reconnect(
-    intesisbox_controller, wmp_server
-):
+async def test_intesisbox_stop_suppresses_reconnect(intesisbox_controller, wmp_server):
     """An intentional stop() must not resurrect the connection."""
     controller = intesisbox_controller
 
@@ -971,7 +967,8 @@ async def test_intesisbox_stop_suppresses_reconnect(
 
 @pytest.mark.asyncio
 async def test_set_value_falls_back_to_portal_when_socket_is_down(
-    cloud_controller, mock_aioresponse  # noqa: F811
+    cloud_controller,
+    mock_aioresponse,  # noqa: F811
 ):
     """With the command socket unreachable, SETs go through the web portal.
 
@@ -1005,10 +1002,77 @@ async def test_set_value_falls_back_to_portal_when_socket_is_down(
 
 @pytest.mark.asyncio
 async def test_portal_fallback_failure_reports_set_as_failed(
-    cloud_controller, mock_aioresponse  # noqa: F811
+    cloud_controller,
+    mock_aioresponse,  # noqa: F811
 ):
     """A portal that rejects the login must fail the SET, not raise."""
     portal = PORTAL_URL[DEVICE_INTESISHOME]
     mock_aioresponse.get(f"{portal}/login", body="maintenance page", repeat=True)
 
     assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is False
+
+
+def _mock_working_portal(mock_aioresponse):  # noqa: F811
+    """Register a portal that would happily accept any SET."""
+    portal = PORTAL_URL[DEVICE_INTESISHOME]
+    mock_aioresponse.get(
+        f"{portal}/login",
+        body='<input type="hidden" name="signin[_csrf_token]" value="tok123" />',
+        repeat=True,
+    )
+    mock_aioresponse.post(f"{portal}/login", body="", repeat=True)
+    mock_aioresponse.get(f"{portal}/panel/headers", body="userId=4242,", repeat=True)
+    mock_aioresponse.post(
+        re.compile(re.escape(f"{portal}/device/setVal") + r"\?.*"),
+        body="OK",
+        repeat=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_use_socket_false_does_not_use_the_portal_fallback(
+    mock_aioresponse,  # noqa: F811
+):
+    """use_socket=False means read-only, and the portal must not undo that.
+
+    The portal here would accept the SET, so a controller that reaches it
+    returns True. A read-only controller has to return False without ever
+    logging in.
+    """
+    _mock_working_portal(mock_aioresponse)
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, use_socket=False
+        )
+        await controller.connect()
+
+        assert await controller._set_value(MOCK_DEVICE_ID, 9, 220) is False
+        assert controller._portal_session is None
+        assert controller._portal_user_id is None
+
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_clears_the_cached_portal_login(
+    cloud_controller,
+    mock_aioresponse,  # noqa: F811
+):
+    """stop() closes the portal session, so the cached userId must go too.
+
+    Keeping it would send the next SET straight to _portal_post_set with
+    no session behind it, raising out of a path documented never to raise.
+    """
+    _mock_working_portal(mock_aioresponse)
+
+    assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is True
+    assert cloud_controller._portal_user_id == "4242"
+
+    await cloud_controller.stop()
+    assert cloud_controller._portal_session is None
+    assert cloud_controller._portal_user_id is None
+
+    # The next SET must log in again rather than post through the session
+    # stop() disposed of, which used to raise AttributeError.
+    assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is True
+    assert cloud_controller._portal_session is not None

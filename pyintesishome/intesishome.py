@@ -20,7 +20,9 @@ from .const import (
     DEVICE_INTESISHOME,
     INTESIS_CMD_STATUS,
     POLL_INTERVAL_MIN,
+    PORTAL_TIMEOUT,
     PORTAL_URL,
+    PORTAL_USER_AGENT,
     SOCKET_CONNECT_TIMEOUT,
 )
 from .exceptions import IHAuthenticationError, IHConnectionError
@@ -91,7 +93,8 @@ class IntesisHome(IntesisBase):
         availability flapping this design exists to remove.
 
         :param use_socket: allow the socket to be opened for commands at
-            all. False makes the controller read-only.
+            all. False makes the controller read-only - it disables the
+            web portal command fallback too, so nothing sends commands.
         :param poll_interval: seconds between HTTP state polls. Clamped
             to a 60s floor to stay a good citizen of a third-party cloud
             API. Pass 0 or None to disable polling, which leaves state
@@ -317,9 +320,14 @@ class IntesisHome(IntesisBase):
             if not pending.future.done():
                 pending.future.set_result(False)
         self._pending_set_acks.clear()
-        if self._portal_session and not self._portal_session.closed:
-            await self._portal_session.close()
+        if self._portal_session:
+            if not self._portal_session.closed:
+                await self._portal_session.close()
             self._portal_session = None
+        # The cached userId belongs to the session that just went away.
+        # Leaving it set would make the next _portal_set_value skip the
+        # login and post through a session that no longer exists.
+        self._portal_user_id = None
         await super().stop()
 
     async def _ensure_socket(self) -> bool:
@@ -359,17 +367,24 @@ class IntesisHome(IntesisBase):
                 # TCP timeout (~130s) to fail, and every command would pay
                 # it before discovering the socket is unusable.
                 self._reader, self._writer = await asyncio.wait_for(
-                    asyncio.open_connection(
-                        self._cmd_server, self._cmd_server_port
-                    ),
+                    asyncio.open_connection(self._cmd_server, self._cmd_server_port),
                     timeout=SOCKET_CONNECT_TIMEOUT,
                 )
-            except (OSError, asyncio.TimeoutError) as exc:
+            except asyncio.TimeoutError:
+                # Spelled out rather than logged as the exception: str() on
+                # a TimeoutError is empty, which would report the failure
+                # with no reason at all.
+                reason = f"timed out after {SOCKET_CONNECT_TIMEOUT}s"
+            except OSError as exc:
+                reason = str(exc) or type(exc).__name__
+            else:
+                reason = None
+            if reason:
                 _LOGGER.warning(
                     "Connection to %s:%s failed: %s",
                     self._cmd_server,
                     self._cmd_server_port,
-                    exc or f"timed out after {SOCKET_CONNECT_TIMEOUT}s",
+                    reason,
                 )
                 return False
 
@@ -588,10 +603,17 @@ class IntesisHome(IntesisBase):
         ``_portal_set_value``); only if both paths fail is the
         controller effectively read-only, and it says so rather than
         hanging until the ack timeout.
+
+        ``use_socket=False`` is exempt: that is a deliberate read-only
+        controller rather than a broken socket, so it does not fall back.
         """
         if not await self._ensure_socket():
-            if await self._portal_set_value(device_id, uid, value):
-                return True
+            # use_socket=False is a caller saying "this controller is
+            # read-only", not a socket that failed to open, so it must not
+            # be quietly upgraded into portal commands.
+            if self._use_socket:
+                if await self._portal_set_value(device_id, uid, value):
+                    return True
             _LOGGER.warning(
                 "Cannot send SET to %s: no command socket. Commands need "
                 "outbound access to %s:%s",
@@ -655,7 +677,7 @@ class IntesisHome(IntesisBase):
             return False
         async with self._portal_lock:
             try:
-                if self._portal_user_id is None:
+                if self._portal_user_id is None or self._portal_session is None:
                     await self._portal_login()
                 if await self._portal_post_set(device_id, uid, value):
                     return True
@@ -686,7 +708,8 @@ class IntesisHome(IntesisBase):
         """
         if self._portal_session is None or self._portal_session.closed:
             self._portal_session = aiohttp.ClientSession(
-                headers={"User-Agent": "Mozilla/5.0"}
+                headers={"User-Agent": PORTAL_USER_AGENT},
+                timeout=aiohttp.ClientTimeout(total=PORTAL_TIMEOUT),
             )
         base = PORTAL_URL[self._device_type]
         async with self._portal_session.get(f"{base}/login") as resp:
@@ -719,9 +742,7 @@ class IntesisHome(IntesisBase):
             f"&uid={int(uid)}&value={int(value)}"
             f"&userId={self._portal_user_id}"
         )
-        async with self._portal_session.post(
-            url, headers=_PORTAL_XHR_HEADERS
-        ) as resp:
+        async with self._portal_session.post(url, headers=_PORTAL_XHR_HEADERS) as resp:
             body = (await resp.text()).strip()
         if body == "OK":
             _LOGGER.info(
