@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import aiohttp
@@ -40,6 +41,9 @@ class _FakeResponse:
 
     def __init__(self, payload):
         self._payload = payload
+        # Real aiohttp responses always carry this (empty when the response
+        # sets no Set-Cookie header); pyintesishome reads it on every poll.
+        self.cookies = SimpleCookie()
 
     async def json(self, content_type=None):
         return self._payload
