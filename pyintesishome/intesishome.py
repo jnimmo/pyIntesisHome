@@ -12,6 +12,7 @@ import aiohttp
 from .const import (
     API_OS,
     API_URL,
+    API_USER_AGENT,
     API_VER,
     DEVICE_INTESISHOME,
     INTESIS_CMD_STATUS,
@@ -460,7 +461,9 @@ class IntesisHome(IntesisBase):
         status_response = None
         try:
             async with self._web_session.post(
-                url=self._api_url, data=get_status
+                url=self._api_url,
+                data=get_status,
+                headers={"User-Agent": API_USER_AGENT},
             ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)

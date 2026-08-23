@@ -399,6 +399,10 @@ API_VER = {
 # The official apps always send this alongside the version.
 API_OS = "android"
 
+# Sent as the User-Agent header on every cloud HTTP poll, matching what the
+# official iOS app identifies itself as.
+API_USER_AGENT = "AC Cloud/3.3.3 (iPhone; iOS 26.6; Scale/3.00)"
+
 LOCAL_CMD_LOGIN = "login"
 LOCAL_CMD_GET_INFO = "getinfo"
 LOCAL_CMD_SET_DP_VALUE = "setdatapointvalue"
