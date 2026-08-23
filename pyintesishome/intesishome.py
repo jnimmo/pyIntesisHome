@@ -10,9 +10,11 @@ from typing import NamedTuple
 import aiohttp
 
 from .const import (
+    API_APP_NAME,
     API_OS,
+    API_OS_VERSION,
+    API_UA_SCALE,
     API_URL,
-    API_USER_AGENT,
     API_VER,
     DEVICE_INTESISHOME,
     INTESIS_CMD_STATUS,
@@ -456,14 +458,19 @@ class IntesisHome(IntesisBase):
             "cmd": INTESIS_CMD_STATUS,
             "version": self._api_ver,
             "os": API_OS,
+            "osVersion": API_OS_VERSION,
         }
+        user_agent = (
+            f"{API_APP_NAME[self._device_type]}/{self._api_ver} "
+            f"(iPhone; iOS {API_OS_VERSION}; Scale/{API_UA_SCALE})"
+        )
 
         status_response = None
         try:
             async with self._web_session.post(
                 url=self._api_url,
                 data=get_status,
-                headers={"User-Agent": API_USER_AGENT},
+                headers={"User-Agent": user_agent},
             ) as resp:
                 status_response = await resp.json(content_type=None)
                 _LOGGER.debug(status_response)

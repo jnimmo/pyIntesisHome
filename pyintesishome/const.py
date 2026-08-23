@@ -378,30 +378,46 @@ API_URL = {
 # comparable rate, so this is deliberately conservative.
 POLL_INTERVAL_MIN = 60
 
-# Version string sent with every cloud HTTP request. The official apps send
-# their own versionName here, and the login response carries `forceUpdate` and
+# Version string sent with every cloud HTTP request, and also embedded in the
+# User-Agent header (see API_APP_NAME below). The official apps send their own
+# versionName here, and the login response carries `forceUpdate` and
 # `lastAppVersion`, so the server has version-gating machinery and an old value
-# is a standing risk. Each brand is a separate white-label build of the same
-# Android codebase, where AppConstants.apiVersion tracks that app's versionName:
-#   - IntesisHome: AC Cloud (com.intesis.intesishome), read from the APK and
-#     confirmed against the live endpoint.
-#   - airconwithme: read from the APK (com.intesis.airconwithme).
-#   - anywair: the current Play release (com.intesis.anywair). The 1.6.4 APK
-#     confirms apiVersion tracks versionName for this app too, so 1.7.3 is
-#     what a current install sends. It replaces 2.9, which matched no release
-#     this app has ever had.
+# is a standing risk. Each brand is a separate white-label app; these values
+# are the iOS versionName, captured from each app's own traffic/User-Agent:
+#   - IntesisHome: AC Cloud (com.intesis.intesishome).
+#   - airconwithme: AirconWithMe.
+#   - anywair: anywAIR. The captured request also revealed the os/osVersion
+#     form fields below.
+# These previously tracked the Android APK's versionName instead, which for
+# airconwithme and anywair does not match the iOS number - the two platforms'
+# builds are versioned independently.
 API_VER = {
-    DEVICE_AIRCONWITHME: "2.3.3",
-    DEVICE_ANYWAIR: "1.7.3",
+    DEVICE_AIRCONWITHME: "2.2.3",
+    DEVICE_ANYWAIR: "1.5.2",
     DEVICE_INTESISHOME: "3.3.3",
 }
 
-# The official apps always send this alongside the version.
-API_OS = "android"
+# The official apps always send this alongside the version. Now impersonating
+# the iOS apps (see API_VER above), so this is "ios" rather than "android".
+API_OS = "ios"
 
-# Sent as the User-Agent header on every cloud HTTP poll, matching what the
-# official iOS app identifies itself as.
-API_USER_AGENT = "AC Cloud/3.3.3 (iPhone; iOS 26.6; Scale/3.00)"
+# Sent alongside "os" in the form body on every cloud HTTP poll, and folded
+# into the User-Agent header's "iOS x.y" component. Captured from live iOS
+# app traffic.
+API_OS_VERSION = "26.6"
+
+# Retina scale factor the iOS apps report in their User-Agent. Consistent
+# across all three brands in the captured traffic.
+API_UA_SCALE = "3.00"
+
+# Per-brand app name, as it appears in that brand's User-Agent header, e.g.
+# "AC Cloud/3.3.3 (iPhone; iOS 26.6; Scale/3.00)". Combined with API_VER at
+# request time to build the full header.
+API_APP_NAME = {
+    DEVICE_AIRCONWITHME: "AirconWithMe",
+    DEVICE_ANYWAIR: "anywAIR",
+    DEVICE_INTESISHOME: "AC Cloud",
+}
 
 LOCAL_CMD_LOGIN = "login"
 LOCAL_CMD_GET_INFO = "getinfo"
