@@ -12,6 +12,7 @@ import aiohttp
 
 from .const import (
     API_APP_NAME,
+    API_EXTRA_HEADERS,
     API_OS,
     API_OS_VERSION,
     API_UA_SCALE,
@@ -520,7 +521,7 @@ class IntesisHome(IntesisBase):
             async with self._web_session.post(
                 url=self._api_url,
                 data=get_status,
-                headers={"User-Agent": user_agent},
+                headers={"User-Agent": user_agent, **API_EXTRA_HEADERS},
                 cookies=self._cookies,
             ) as resp:
                 # Sent explicitly above rather than left to the session's own
