@@ -634,10 +634,11 @@ async def test_stop_completes_when_a_disconnect_races_it(cloud_controller):
     """stop() must not wait on a poller that outlived its cancellation.
 
     _handle_disconnect() wakes the poller, and stop() cancels it in the same
-    loop iteration. On Python < 3.12 asyncio.wait_for discards a cancel
-    delivered while the future it was waiting on has already completed, so
-    the poller has to notice _stopping itself - otherwise stop() awaits a
-    task that never finishes and shutdown hangs for good.
+    loop iteration. Pinning the invariant _cancel_task_if_exists rests on:
+    one cancel() has to reap the task. Python < 3.12 broke it outright -
+    wait_for discarded a cancel delivered while the future it was waiting on
+    had already completed - and while 3.12 propagates it correctly, nothing
+    about the loop guarantees that on its own.
     """
     # Exactly what stop() does, in one loop iteration and with no await
     # between: a disconnect has already woken the poller, and the cancel

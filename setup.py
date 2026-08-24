@@ -18,9 +18,16 @@ setup(
     author_email="james@nimmo.net.nz",
     license="MIT",
     install_requires=["aiohttp>=3.7.4,<4"],
+    # 3.12 rewrote asyncio.wait_for on top of asyncio.timeout. Earlier
+    # versions discard a cancellation delivered while the future being
+    # waited on has already completed, which the poller's shutdown path
+    # would otherwise have to keep working around untested.
+    python_requires=">=3.12",
     packages=["pyintesishome"],
     classifiers=[
         "Development Status :: 4 - Beta",
+        "Programming Language :: Python :: 3.12",
+        "Programming Language :: Python :: 3.13",
         "Programming Language :: Python :: 3.14",
         "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
         "Topic :: Home Automation",

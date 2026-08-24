@@ -256,16 +256,21 @@ class IntesisHome(IntesisBase):
                 self._poll_wakeup.clear()
 
                 if self._stopping:
-                    # stop() sets _stopping before cancelling this task, and
-                    # that cancel does not always arrive. On Python < 3.12
-                    # asyncio.wait_for discards a cancellation delivered
-                    # while the future it is waiting on has already
-                    # completed - which is exactly what stop() racing a
-                    # disconnect produces, since _handle_disconnect sets
-                    # _poll_wakeup. Relying on the cancel alone, the loop
-                    # would carry on and the await in
-                    # _cancel_task_if_exists would never return, hanging
-                    # shutdown for good.
+                    # Retire on the flag stop() sets, rather than trusting
+                    # the cancel it sends straight after to arrive. On
+                    # Python < 3.12 it does not always: asyncio.wait_for
+                    # discarded a cancellation delivered while the future
+                    # it was waiting on had already completed, which is
+                    # what stop() racing a disconnect produces, since
+                    # _handle_disconnect sets _poll_wakeup. The poller
+                    # absorbed its only cancel, looped on, and the await in
+                    # _cancel_task_if_exists never returned.
+                    #
+                    # 3.12 rewrote wait_for over asyncio.timeout and
+                    # propagates the cancel correctly, so on the versions
+                    # this package supports the check is belt-and-braces.
+                    # It is kept because shutdown should not rest on the
+                    # cancellation semantics of one await deep in the loop.
                     _LOGGER.debug("Stopping the %s poller", self._device_type)
                     return
 
