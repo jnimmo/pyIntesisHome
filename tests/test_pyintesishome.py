@@ -1104,3 +1104,115 @@ async def test_stop_clears_the_cached_portal_login(
     # stop() disposed of, which used to raise AttributeError.
     assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is True
     assert cloud_controller._portal_session is not None
+
+
+@pytest.mark.asyncio
+async def test_transient_api_error_does_not_retire_the_poller(cloud_controller):
+    """The cloud reports every failure as a 200 with an errorCode, so a
+    backend hiccup used to be indistinguishable from bad credentials - and
+    the poller retired on both, leaving the controller dead until the
+    consumer restarted."""
+    error_payload = {"errorCode": 20, "errorMessage": "INTERNAL_SERVER_ERROR"}
+
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response(error_payload),
+    ):
+        with pytest.raises(IHConnectionError):
+            await cloud_controller.poll_status()
+
+    assert cloud_controller.authentication_failed is False
+    # A transient error is one the poller rides out, so it must still be
+    # running and must not have declared an unrecoverable failure.
+    assert not cloud_controller._poll_task.done()
+    assert cloud_controller.error_message == "INTERNAL_SERVER_ERROR"
+
+
+@pytest.mark.asyncio
+async def test_rejected_credentials_are_reported_as_authentication_failure(
+    cloud_controller,
+):
+    """Bad credentials are the one failure a retry cannot survive, so they
+    have to reach the consumer as something it can act on rather than as
+    another unavailable controller."""
+    # Shape taken from a real /api.php/get/control response to a bad
+    # password.
+    error_payload = {"errorCode": 3, "errorMessage": "WRONG_USERNAME_PASSWORD"}
+
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response(error_payload),
+    ):
+        with pytest.raises(IHAuthenticationError):
+            await cloud_controller.poll_status()
+
+    assert cloud_controller.authentication_failed is True
+    # Cached state is still fresh, but nothing will refresh it again until
+    # the credentials are fixed, so the controller must not claim to be
+    # available on the strength of it.
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_a_working_poll_clears_an_earlier_authentication_failure(
+    cloud_controller,
+):
+    """Reauthentication normally rebuilds the controller, but credentials
+    can also start working again on their own (an account restored at the
+    far end). A stale flag would pin the controller unavailable forever."""
+    cloud_controller._authentication_failed = True
+    assert cloud_controller.is_available is False
+
+    await cloud_controller.poll_status()
+
+    assert cloud_controller.authentication_failed is False
+    assert cloud_controller.is_available is True
+
+
+@pytest.mark.asyncio
+async def test_credential_rejection_retires_the_poller(cloud_controller):
+    """Retiring is still right for real credential failures - it stops the
+    controller hammering the API with a password it knows is wrong."""
+    error_payload = {"errorCode": 3, "errorMessage": "WRONG_USERNAME_PASSWORD"}
+
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response(error_payload),
+    ):
+        cloud_controller._poll_interval = 0.05
+        await cloud_controller._cancel_task_if_exists(cloud_controller._poll_task)
+        cloud_controller._poll_task = None
+        cloud_controller._start_poller()
+
+        await wait_until(lambda: cloud_controller._poll_task.done(), timeout=2.0)
+
+    assert cloud_controller.authentication_failed is True
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_error_classification_reads_the_code_not_the_message(cloud_controller):
+    """errorMessage is a human-facing label and not something to branch
+    on. An unrecognised code stays transient however much its text sounds
+    like an auth failure, because retiring the poller in error is the
+    expensive mistake and only the code can be checked reliably."""
+    # Synthetic: no such response has been observed. It exists to pin the
+    # classification to the code, so a future change cannot quietly go
+    # back to matching text.
+    error_payload = {
+        "errorCode": 99,
+        "errorMessage": "PASSWORD_SERVICE_TEMPORARILY_UNAVAILABLE",
+    }
+
+    with patch.object(
+        cloud_controller._web_session,
+        "post",
+        return_value=_json_response(error_payload),
+    ):
+        with pytest.raises(IHConnectionError):
+            await cloud_controller.poll_status()
+
+    assert cloud_controller.authentication_failed is False

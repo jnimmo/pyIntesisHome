@@ -39,6 +39,13 @@ class _PendingSet(NamedTuple):
     future: asyncio.Future
 
 
+# errorCodes from /api.php/get/control that mean the credentials
+# themselves were rejected, as opposed to a failure a retry might survive.
+# Observed: 3 / WRONG_USERNAME_PASSWORD. The full table is not published,
+# so anything not listed here is treated as transient - see
+# _raise_api_error for why that is the safe direction to be wrong in.
+AUTH_ERROR_CODES = frozenset({3})
+
 _LOGGER = logging.getLogger("pyintesishome")
 
 # The official app builds its socket frames with String.format, so they carry
@@ -281,7 +288,12 @@ class IntesisHome(IntesisBase):
                 try:
                     await self.poll_status(sendcallback=True)
                 except IHAuthenticationError as exc:
-                    # Rejected credentials will not fix themselves.
+                    # Rejected credentials will not fix themselves, and
+                    # _raise_api_error only classifies a failure this way
+                    # when the API named the credentials. Retiring is safe
+                    # because authentication_failed is now set: the
+                    # consumer sees an unavailable controller, reauthenticates,
+                    # and rebuilds this object with a fresh poller.
                     _LOGGER.error(
                         "Authentication with %s was rejected while polling; "
                         "stopping: %s",
@@ -469,6 +481,45 @@ class IntesisHome(IntesisBase):
         async with self._poll_lock:
             return await self._poll_status(sendcallback)
 
+    def _raise_api_error(self, status_response):
+        """Turn an errorCode response into the exception it deserves.
+
+        The cloud answers every failure the same way - HTTP 200 carrying
+        an errorCode - so this is the only place the two kinds can be told
+        apart, and getting it wrong is expensive in both directions. Every
+        errorCode used to raise IHAuthenticationError, which retires the
+        poller permanently, so one transient error from the backend left
+        the controller dead until the consumer restarted.
+
+        Only the codes known to mean rejected credentials are treated as
+        such; the rest default to transient. That asymmetry is deliberate,
+        because the full code table is not published: guessing transient
+        costs one poll interval and a retry, while guessing auth costs the
+        user a controller that has stopped polling for good. An unknown
+        code logs the number it saw, so adding it here is a one-line
+        change once its meaning is known.
+        """
+        self._error_message = status_response.get("errorMessage")
+        code = status_response.get("errorCode")
+
+        if code in AUTH_ERROR_CODES:
+            _LOGGER.error(
+                "%s rejected the credentials (code %s): %s",
+                self._device_type,
+                code,
+                self._error_message,
+            )
+            self._authentication_failed = True
+            raise IHAuthenticationError(self._error_message)
+
+        _LOGGER.warning(
+            "%s returned error code %s: %s. Treating it as transient",
+            self._device_type,
+            code,
+            self._error_message,
+        )
+        raise IHConnectionError(self._error_message)
+
     def _apply_config(self, config):
         """Store the socket address and token, and register known devices."""
         if not config:
@@ -560,13 +611,13 @@ class IntesisHome(IntesisBase):
 
         if status_response:
             if "errorCode" in status_response:
-                self._error_message = status_response["errorMessage"]
-                _LOGGER.error("Error from API %s", repr(self._error_message))
-                raise IHAuthenticationError()
+                self._raise_api_error(status_response)
 
             self._apply_config(status_response.get("config"))
             updated_devices = self._apply_statuses(status_response)
             self._error_message = None
+            # Credentials that work now supersede an earlier rejection.
+            self._authentication_failed = False
 
             # Only an answer that actually carried device state counts as a
             # successful update. When every device on the account is
