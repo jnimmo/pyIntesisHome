@@ -546,14 +546,36 @@ class IntesisHome(IntesisBase):
         which the caller treats as "the account answered but the hardware
         is not reporting".
 
-        Returns None instead when the block omitted the list altogether.
-        Under hash tracking that means "unchanged since the hash you sent",
-        which is the opposite of an empty list - the state we already hold
-        is current - so the two must not collapse into the same value.
+        Returns None instead for a block that answers the hash we sent with
+        no list, which means "unchanged since that hash" - the opposite of
+        an empty list, since the state we already hold is current. The two
+        must not collapse into the same value.
+
+        That verdict is only read from a block that came back carrying the
+        hash we sent. A response that simply lacks the block, or carries a
+        different hash and no list, is not making the unchanged claim, and
+        must not be granted it: treating an answer that told us nothing as
+        "everything you hold is current" would pin is_available True
+        forever over state that never refreshes.
+
+        Called before _store_block_hashes, so self._block_hashes still
+        holds what this poll asked with.
         """
-        status_block = status_response.get("status") or {}
+        status_block = status_response.get("status")
+        if not isinstance(status_block, dict):
+            return []
+
         if "status" not in status_block:
-            return None
+            sent_hash = self._block_hashes.get("status")
+            if sent_hash and status_block.get("hash") == sent_hash:
+                return None
+            _LOGGER.debug(
+                "%s sent no status list and no hash we recognise (%s); "
+                "treating as nothing reported",
+                self._device_type,
+                status_block.get("hash"),
+            )
+            return []
 
         updated_devices = []
         statuses = status_block.get("status") or []

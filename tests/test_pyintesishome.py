@@ -1032,6 +1032,69 @@ async def test_unchanged_status_for_an_offline_account_stays_unavailable(
 
 
 @pytest.mark.asyncio
+async def test_a_response_with_no_status_block_is_not_an_unchanged_claim(
+    cloud_controller,
+):
+    """Absence of the block is not the server saying "unchanged".
+
+    Reading it that way would pin is_available True forever over state that
+    never refreshes - the same bug the empty-list handling exists to stop,
+    reached through a different door.
+    """
+    post, _sent = _recording_post({"config": {"token": 1, "hash": "ea4b71bd"}})
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()
+        cloud_controller._last_successful_update = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=cloud_controller._stale_after + 1)
+        await cloud_controller.poll_status()
+
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_a_status_hash_we_did_not_send_is_not_an_unchanged_claim(
+    cloud_controller,
+):
+    """ "Unchanged" is only meaningful as an answer to the hash we asked
+    with. A block carrying some other hash and no list is telling us
+    something we cannot interpret, so it must not count as an update."""
+    post, _sent = _recording_post(
+        {
+            "config": {"token": 1, "hash": "ea4b71bd"},
+            "status": {"hash": "some-hash-we-never-sent"},
+        }
+    )
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()
+        cloud_controller._last_successful_update = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=cloud_controller._stale_after + 1)
+        await cloud_controller.poll_status()
+
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_the_first_poll_cannot_be_answered_with_unchanged(cloud_controller):
+    """Holding no hash, we asked with the "x" sentinel - nothing the server
+    returns can mean "the version you hold"."""
+    cloud_controller._reset_block_hashes()
+
+    post, sent = _recording_post(
+        {"config": {"token": 1, "hash": "ea4b71bd"}, "status": {"hash": "x"}}
+    )
+    with patch.object(cloud_controller._web_session, "post", post):
+        cloud_controller._last_successful_update = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=cloud_controller._stale_after + 1)
+        await cloud_controller.poll_status()
+
+    assert '"status":{"hash":"x"}' in sent[0]["cmd"]
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
 async def test_config_without_inst_keeps_the_devices_it_already_registered(
     cloud_controller,
 ):
