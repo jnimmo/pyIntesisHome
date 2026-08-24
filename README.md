@@ -52,6 +52,12 @@ disposable rather than as the thing the integration is built on:
   torn down, bounding how long a zombie connection can suppress polling.
 - **A disconnect triggers an immediate poll** rather than waiting out the
   interval, so `is_available` doesn't dip in the gap.
+- **Polls send back the hashes the server gave them**, as the official app
+  does. Each block of a response carries a hash of its contents, and echoing
+  that hash on the next poll lets the server reply "unchanged" and omit the
+  body — so a settled account transfers almost nothing per poll. An unchanged
+  reply still counts as a successful update, since it confirms the state
+  already held is current.
 
 | Property | Meaning |
 | --- | --- |

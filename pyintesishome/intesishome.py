@@ -12,6 +12,7 @@ import aiohttp
 
 from .const import (
     API_APP_NAME,
+    API_CULTURE,
     API_EXTRA_HEADERS,
     API_OS,
     API_OS_VERSION,
@@ -19,7 +20,8 @@ from .const import (
     API_URL,
     API_VER,
     DEVICE_INTESISHOME,
-    INTESIS_CMD_STATUS,
+    INTESIS_CMD_HASH_BLOCKS,
+    INTESIS_CMD_HASH_NONE,
     POLL_INTERVAL_MIN,
     PORTAL_TIMEOUT,
     PORTAL_URL,
@@ -55,6 +57,33 @@ _JSON_SEPARATORS = (",", ":")
 _PORTAL_CSRF_RE = re.compile(r'name="signin\[_csrf_token\]"[^>]*value="([^"]+)"')
 _PORTAL_USERID_RE = re.compile(r"userId=(\d+)")
 _PORTAL_XHR_HEADERS = {"X-Requested-With": "XMLHttpRequest"}
+
+
+def _build_status_cmd(hashes: dict) -> str:
+    """Build the poll's "cmd" field, echoing back the hashes we hold.
+
+    A block we have no hash for is asked for with the "x" sentinel, which
+    fetches it in full. Key order and separators reproduce the captured
+    app request byte-for-byte; INTESIS_CMD_STATUS is what this returns
+    when no hashes are held, and the tests pin the two together.
+    """
+
+    def block(name):
+        return {"hash": hashes.get(name) or INTESIS_CMD_HASH_NONE}
+
+    return json.dumps(
+        {
+            "status": block("status"),
+            "config": block("config"),
+            # Not hash-tracked: the app sends an empty string here and the
+            # server returns the block in full every time.
+            "permissions": "",
+            "scenes": block("scenes"),
+            "patterns": block("patterns"),
+            "error": {**block("error"), "culture": API_CULTURE},
+        },
+        separators=_JSON_SEPARATORS,
+    )
 
 
 # pylint: disable=too-many-instance-attributes, too-many-arguments, too-many-positional-arguments, too-many-public-methods
@@ -148,6 +177,15 @@ class IntesisHome(IntesisBase):
         # the token is single-use, so a poll racing connect() would consume
         # the credential connect() is about to present.
         self._poll_lock = asyncio.Lock()
+        # Per-block content hashes from the last poll, echoed back on the
+        # next one so the server can skip resending blocks we already hold.
+        # Read and written only under _poll_lock.
+        self._block_hashes: dict = {}
+        # The device ids from the last status list the server actually sent.
+        # A hash-matched poll omits the list entirely, and this is what says
+        # whether the state it declined to resend was device state or the
+        # empty list an all-offline account returns.
+        self._status_devices: list = []
         # SET correlation. The cloud's set_ack frame echoes our seqNo
         # masked to the low byte (seqNo & 0xFF) regardless of whether the
         # SET was applied, clamped, or targeted an invalid uid - there's
@@ -329,6 +367,10 @@ class IntesisHome(IntesisBase):
         # Leaving it set would make the next _portal_set_value skip the
         # login and post through a session that no longer exists.
         self._portal_user_id = None
+        # Same reasoning for the block hashes: a later connect() starts a
+        # new session, and claiming to hold blocks from the old one would
+        # have the server skip resending state we no longer have.
+        self._reset_block_hashes()
         await super().stop()
 
     async def _ensure_socket(self) -> bool:
@@ -457,9 +499,17 @@ class IntesisHome(IntesisBase):
             # config block must not take the whole poll down.
             return
 
-        self._cmd_server = config.get("serverIP")
-        self._cmd_server_port = config.get("serverPort")
-        self._auth_token = config.get("token")
+        # Assigned only when present. These are per-session values that sit
+        # outside the hashed payload - every capture has them on every poll,
+        # hash match or not - but blanking a live token and server address
+        # because one response omitted them would break the command socket
+        # for a stale copy's sake.
+        if "serverIP" in config:
+            self._cmd_server = config["serverIP"]
+        if "serverPort" in config:
+            self._cmd_server_port = config["serverPort"]
+        if "token" in config:
+            self._auth_token = config["token"]
 
         _LOGGER.debug(
             "Server: %s:%s, Token: %s",
@@ -477,15 +527,36 @@ class IntesisHome(IntesisBase):
                 }
                 _LOGGER.debug(repr(self._devices))
 
-    def _apply_statuses(self, status_response) -> list:
+    def _store_block_hashes(self, status_response):
+        """Remember each block's hash so the next poll can skip resends."""
+        for name in INTESIS_CMD_HASH_BLOCKS:
+            block = status_response.get(name)
+            if isinstance(block, dict) and block.get("hash"):
+                self._block_hashes[name] = block["hash"]
+
+    def _reset_block_hashes(self):
+        """Forget every stored hash, so the next poll refetches in full."""
+        self._block_hashes.clear()
+        self._status_devices = []
+
+    def _apply_statuses(self, status_response):
         """Apply the status list, returning the device ids it carried.
 
-        An empty return means the response carried no device state at all,
+        An empty list means the response carried no device state at all,
         which the caller treats as "the account answered but the hardware
         is not reporting".
+
+        Returns None instead when the block omitted the list altogether.
+        Under hash tracking that means "unchanged since the hash you sent",
+        which is the opposite of an empty list - the state we already hold
+        is current - so the two must not collapse into the same value.
         """
+        status_block = status_response.get("status") or {}
+        if "status" not in status_block:
+            return None
+
         updated_devices = []
-        statuses = (status_response.get("status") or {}).get("status") or []
+        statuses = status_block.get("status") or []
         for status in statuses:
             device_id = str(status["deviceId"])
 
@@ -506,7 +577,7 @@ class IntesisHome(IntesisBase):
         get_status = {
             "username": self._username,
             "password": self._password,
-            "cmd": INTESIS_CMD_STATUS,
+            "cmd": _build_status_cmd(self._block_hashes),
             "version": self._api_ver,
             "os": API_OS,
             "osVersion": API_OS_VERSION,
@@ -543,14 +614,39 @@ class IntesisHome(IntesisBase):
             if "errorCode" in status_response:
                 self._error_message = status_response["errorMessage"]
                 _LOGGER.error("Error from API %s", repr(self._error_message))
+                # Whatever the rejection means, our cached copy is no longer
+                # something we can prove current. Drop the hashes so the next
+                # accepted poll refetches in full rather than being told
+                # "unchanged" about state we can no longer vouch for.
+                self._reset_block_hashes()
                 raise IHAuthenticationError()
 
             self._apply_config(status_response.get("config"))
-            updated_devices = self._apply_statuses(status_response)
+            statuses = self._apply_statuses(status_response)
+            # Only once the response has been applied without raising - a
+            # stored hash claims we hold that block, so storing one for a
+            # block we failed to apply would suppress its every resend.
+            self._store_block_hashes(status_response)
             self._error_message = None
 
-            # Only an answer that actually carried device state counts as a
-            # successful update. When every device on the account is
+            if statuses is None:
+                # Hash matched, so the server sent no list and the state we
+                # already hold stands. Whether that counts as the account
+                # reporting is the verdict the last real list gave.
+                updated_devices = []
+                live_devices = self._status_devices
+                _LOGGER.debug(
+                    "%s status unchanged; %s device(s) still reporting",
+                    self._device_type,
+                    len(live_devices),
+                )
+            else:
+                updated_devices = statuses
+                self._status_devices = statuses
+                live_devices = statuses
+
+            # Only an answer that leaves us holding device state counts as
+            # a successful update. When every device on the account is
             # offline the cloud still returns 200 with a full config block
             # and an empty status list - the account is reachable, the
             # hardware is not. Stamping the timestamp on that would pin
@@ -558,11 +654,17 @@ class IntesisHome(IntesisBase):
             # refreshes, which is the availability bug this mechanism
             # exists to fix, only inverted.
             #
+            # "Leaves us holding" rather than "carried", because a
+            # hash-matched poll carries nothing by design and still leaves
+            # the state it declined to resend perfectly current. An
+            # all-offline account hashes an empty list, so its unchanged
+            # polls resolve to no live devices either way.
+            #
             # Note this is an account-level signal: in a multi-device
             # installation one reporting device keeps the controller
             # available. Per-device liveness would need per-device
             # timestamps.
-            if updated_devices:
+            if live_devices:
                 self._last_successful_update = datetime.now(timezone.utc)
             else:
                 _LOGGER.debug(

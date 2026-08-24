@@ -20,6 +20,7 @@ from pyintesishome import (
 from pyintesishome.const import (
     API_URL,
     DEVICE_INTESISHOME,
+    INTESIS_CMD_STATUS,
     POLL_INTERVAL_MIN,
     PORTAL_URL,
 )
@@ -848,6 +849,272 @@ async def test_offline_device_does_not_count_as_a_successful_update(cloud_contro
         await cloud_controller.poll_status()
 
     assert cloud_controller.is_available is False
+
+
+# ---------------------------------------------------------------------------
+# Response hash tracking
+# ---------------------------------------------------------------------------
+
+# The blocks the cloud hashes, and a plausible hash for each, taken from a
+# real response so the round-trip test below can be pinned to the capture.
+CAPTURED_RESPONSE = {
+    "config": {
+        "token": 1122409007,
+        "pushToken": "channel-7f7959e1567f278cff8c64602c15f494",
+        "lastAppVersion": "2.8",
+        "forceUpdate": 0,
+        "setDelay": 0.7,
+        "devicesLimit": 100,
+        "devicesCount": 1,
+        "serverIP": "212.92.41.143",
+        "serverPort": 5210,
+        "hash": "401591906a55d19aef71dceb7692571b3d619783",
+    },
+    "status": {"hash": "97d170e1550eee4afc0af065b78cda302a97674c"},
+    "permissions": {
+        "canEditInstallation": True,
+        "canEditDevice": True,
+        "canEditProfile": True,
+        "maxPatterns": 10,
+        "maxRules": 10,
+        "maxActions": 10,
+        "maxScenes": 10,
+        "endLicense": "2012/4/1",
+    },
+    "scenes": {"hash": "c4a2cf340ba61abcab457a75313a516c49ec6268"},
+    "patterns": {"hash": "97d170e1550eee4afc0af065b78cda302a97674c"},
+    "error": {"hash": "5a39b45d7140a1f6fde10b4d94b2a046fb4a7048"},
+}
+
+# The request the captured app sent immediately after that response, with
+# every hash echoed back. Percent-decoded from the capture's form body.
+CAPTURED_NEXT_CMD = (
+    '{"status":{"hash":"97d170e1550eee4afc0af065b78cda302a97674c"},'
+    '"config":{"hash":"401591906a55d19aef71dceb7692571b3d619783"},'
+    '"permissions":"",'
+    '"scenes":{"hash":"c4a2cf340ba61abcab457a75313a516c49ec6268"},'
+    '"patterns":{"hash":"97d170e1550eee4afc0af065b78cda302a97674c"},'
+    '"error":{"hash":"5a39b45d7140a1f6fde10b4d94b2a046fb4a7048","culture":"en"}}'
+)
+
+
+def _recording_post(*payloads):
+    """A stand-in for session.post that records what each poll sent.
+
+    Returns (post, sent). Payloads are served in order; the last one
+    repeats, so a test that only cares about one response can pass one.
+    """
+    sent = []
+
+    def post(url=None, data=None, **kwargs):
+        sent.append(data)
+        return _json_response(payloads[min(len(sent) - 1, len(payloads) - 1)])
+
+    return post, sent
+
+
+@pytest.mark.asyncio
+async def test_first_poll_asks_for_every_block_with_the_hash_sentinel():
+    """Holding no hashes, a poll must ask for everything - which is the
+    captured first request, byte-for-byte."""
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, device_type=DEVICE_INTESISHOME
+        )
+        post, sent = _recording_post(CAPTURED_RESPONSE)
+        with patch.object(controller._web_session, "post", post):
+            await controller.poll_status()
+
+        assert sent[0]["cmd"] == INTESIS_CMD_STATUS
+
+
+@pytest.mark.asyncio
+async def test_poll_echoes_back_the_hashes_the_server_returned(cloud_controller):
+    """The whole point of the mechanism: the second poll tells the server
+    which version of each block we already hold, so it can skip resending
+    them. Pinned to the captured app request."""
+    post, sent = _recording_post(CAPTURED_RESPONSE)
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()
+        await cloud_controller.poll_status()
+
+    # The first of these two polls carried whatever the fixture's connect()
+    # had already learned; the second carries the captured response's hashes.
+    assert sent[1]["cmd"] == CAPTURED_NEXT_CMD
+
+
+@pytest.mark.asyncio
+async def test_unchanged_status_block_keeps_the_controller_available(
+    cloud_controller,
+):
+    """A hash match means "the state you hold is current", so it is a
+    successful update even though it carries no device state.
+
+    This is the inverse of the offline case below, and the two are told
+    apart only by whether the block carries a "status" key at all. Reading
+    a hash match as "nothing reported" would make every device go
+    unavailable a couple of polls after its state settled - i.e. exactly
+    when the mechanism starts working.
+    """
+    unchanged = {
+        "config": {
+            "token": 1234567890,
+            "serverIP": "127.0.0.1",
+            "serverPort": 19999,
+            "hash": "ea4b71bd4e8ba5ad045e6bbbb4118d2816efbcb5",
+        },
+        # No inner "status" key: the server is saying "unchanged", which is
+        # not the same as the empty list an all-offline account gets.
+        "status": {"hash": "7398e787639ab87c431f77b96e4a1590f16a4384"},
+    }
+
+    # Age the last update past the point where cached state is trusted.
+    cloud_controller._last_successful_update = datetime.now(timezone.utc) - timedelta(
+        seconds=cloud_controller._stale_after + 1
+    )
+    assert cloud_controller.is_available is False
+
+    post, _sent = _recording_post(unchanged)
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()
+
+    assert cloud_controller.is_available is True
+    # ...and the state the server declined to resend is still there.
+    assert cloud_controller.get_device(MOCK_DEVICE_ID) is not None
+
+
+@pytest.mark.asyncio
+async def test_unchanged_status_block_fires_no_update_callbacks(cloud_controller):
+    """Nothing changed, so there is nothing to tell subscribers about."""
+    received = []
+
+    async def callback(device_id=None):
+        received.append(device_id)
+
+    cloud_controller.add_update_callback(callback)
+
+    unchanged = {
+        "config": {"token": 1234567890, "hash": "ea4b71bd"},
+        "status": {"hash": "7398e787639ab87c431f77b96e4a1590f16a4384"},
+    }
+    post, _sent = _recording_post(unchanged)
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status(sendcallback=True)
+
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_unchanged_status_for_an_offline_account_stays_unavailable(
+    cloud_controller,
+):
+    """An all-offline account hashes an empty list, so its polls go
+    unchanged too. That must not launder "nothing is reporting" into a
+    successful update just because the server stopped repeating itself."""
+    offline = {
+        "config": {"token": 1234567890, "hash": "ea4b71bd"},
+        "status": {"hash": "97d170e1550eee4afc0af065b78cda302a97674c", "status": []},
+    }
+    unchanged = {
+        "config": {"token": 1234567890, "hash": "ea4b71bd"},
+        "status": {"hash": "97d170e1550eee4afc0af065b78cda302a97674c"},
+    }
+
+    post, _sent = _recording_post(offline, unchanged)
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()  # empty list: nothing reporting
+        cloud_controller._last_successful_update = datetime.now(
+            timezone.utc
+        ) - timedelta(seconds=cloud_controller._stale_after + 1)
+        await cloud_controller.poll_status()  # unchanged: still nothing
+
+    assert cloud_controller.is_available is False
+
+
+@pytest.mark.asyncio
+async def test_config_without_inst_keeps_the_devices_it_already_registered(
+    cloud_controller,
+):
+    """A hash-matched config block omits the installation list. The devices
+    it registered on an earlier poll have to survive that."""
+    assert cloud_controller.get_device(MOCK_DEVICE_ID) is not None
+
+    post, _sent = _recording_post(
+        {
+            "config": {
+                "token": 999,
+                "serverIP": "127.0.0.1",
+                "serverPort": 19999,
+                "hash": "ea4b71bd",
+            },
+            "status": {"hash": "7398e787"},
+        }
+    )
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()
+
+    assert cloud_controller.get_device(MOCK_DEVICE_ID) is not None
+
+
+@pytest.mark.asyncio
+async def test_config_omitting_the_token_does_not_blank_it(cloud_controller):
+    """Every capture carries the session fields on every poll, hash match or
+    not. If one ever didn't, keeping the last known token beats nulling it
+    and breaking the command socket."""
+    before = cloud_controller._auth_token
+    assert before is not None
+
+    post, _sent = _recording_post({"config": {"hash": "ea4b71bd"}, "status": {}})
+    with patch.object(cloud_controller._web_session, "post", post):
+        await cloud_controller.poll_status()
+
+    assert cloud_controller._auth_token == before
+    assert cloud_controller._cmd_server is not None
+
+
+@pytest.mark.asyncio
+async def test_stop_forgets_the_stored_hashes(cloud_controller):
+    """A later connect() is a new session. Claiming to hold blocks from the
+    old one would have the server skip resending state we no longer have."""
+    assert cloud_controller._block_hashes  # populated by the fixture's connect()
+
+    await cloud_controller.stop()
+
+    assert cloud_controller._block_hashes == {}
+    assert cloud_controller._status_devices == []
+
+
+@pytest.mark.asyncio
+async def test_rejected_credentials_forget_the_stored_hashes(cloud_controller):
+    """Whatever the rejection means, we can no longer prove our cached copy
+    is current, so the next accepted poll has to refetch in full."""
+    assert cloud_controller._block_hashes
+
+    post, _sent = _recording_post({"errorCode": 5, "errorMessage": "Invalid"})
+    with patch.object(cloud_controller._web_session, "post", post):
+        with pytest.raises(IHAuthenticationError):
+            await cloud_controller.poll_status()
+
+    assert cloud_controller._block_hashes == {}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_poll_does_not_store_hashes(cloud_controller):
+    """A stored hash asserts we hold that block. Storing one for a block we
+    then failed to apply would suppress its every resend."""
+    cloud_controller._block_hashes.clear()
+
+    # A status entry with no "uid" blows up mid-apply.
+    broken = {
+        "config": {"token": 1, "hash": "ea4b71bd"},
+        "status": {"hash": "deadbeef", "status": [{"deviceId": MOCK_DEVICE_ID}]},
+    }
+    post, _sent = _recording_post(broken)
+    with patch.object(cloud_controller._web_session, "post", post):
+        with pytest.raises(KeyError):
+            await cloud_controller.poll_status()
+
+    assert "status" not in cloud_controller._block_hashes
 
 
 # ---------------------------------------------------------------------------

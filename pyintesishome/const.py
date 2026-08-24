@@ -1,16 +1,45 @@
 """Constants for pyintesishome"""
 
-# Sent as the "cmd" form field on every cloud HTTP poll. Matches a Proxyman
-# capture of AC Cloud 3.3.3 (iOS) byte-for-byte: the official app always
-# requests all five blocks, not just status/config, and always includes the
-# empty "permissions" string and the error block's "culture". We don't parse
-# scenes/patterns/permissions/error today, but sending the same shape as the
-# real app keeps our traffic indistinguishable from it.
+# The "cmd" form field on every cloud HTTP poll is a map of the blocks we
+# want back. Matches a Proxyman capture of AC Cloud 3.3.3 (iOS)
+# byte-for-byte: the official app always requests all five blocks, not just
+# status/config, and always includes the empty "permissions" string and the
+# error block's "culture". We don't parse scenes/patterns/permissions/error
+# today, but sending the same shape as the real app keeps our traffic
+# indistinguishable from it.
+#
+# Each block carries a hash, which is how the server dedupes responses - see
+# INTESIS_CMD_HASH_NONE. This constant is the all-sentinel form, i.e. what a
+# poll sends when it holds no hashes yet.
 INTESIS_CMD_STATUS = (
     '{"status":{"hash":"x"},"config":{"hash":"x"},"permissions":"",'
     '"scenes":{"hash":"x"},"patterns":{"hash":"x"},'
     '"error":{"hash":"x","culture":"en"}}'
 )
+
+# The cloud dedupes response bodies by hash. Every block it returns carries
+# a "hash" of that block's contents; sending that hash back on the next poll
+# means "I already hold this version", and the server then replies with the
+# hash alone and omits the body. The official app does this on every poll
+# after its first, so tracking hashes is both what our traffic should look
+# like and a real saving on an endpoint we hit every couple of minutes.
+#
+# "x" is the app's sentinel for "I hold nothing, send it all" - the first
+# poll, and any poll after something invalidated our cached copy.
+INTESIS_CMD_HASH_NONE = "x"
+
+# The blocks whose hashes are worth tracking, i.e. every block the server
+# returns a hash for. "permissions" is deliberately absent: the app sends it
+# as an empty string rather than a hash block, and the server returns it in
+# full every time.
+INTESIS_CMD_HASH_BLOCKS = ("status", "config", "scenes", "patterns", "error")
+
+# Sent inside the error block alongside its hash, selecting the language the
+# server renders error strings in. The captured app sends the device locale;
+# we don't surface error strings at all yet, so this is fixed at the value
+# the capture showed.
+API_CULTURE = "en"
+
 INTESIS_NULL = 32768
 
 DEVICE_INTESISHOME = "IntesisHome"
