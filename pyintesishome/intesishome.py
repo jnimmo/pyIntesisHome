@@ -12,6 +12,7 @@ import aiohttp
 
 from .const import (
     API_APP_NAME,
+    API_EXTRA_HEADERS,
     API_OS,
     API_OS_VERSION,
     API_UA_SCALE,
@@ -253,6 +254,25 @@ class IntesisHome(IntesisBase):
                 except asyncio.TimeoutError:
                     pass
                 self._poll_wakeup.clear()
+
+                if self._stopping:
+                    # Retire on the flag stop() sets, rather than trusting
+                    # the cancel it sends straight after to arrive. On
+                    # Python < 3.12 it does not always: asyncio.wait_for
+                    # discarded a cancellation delivered while the future
+                    # it was waiting on had already completed, which is
+                    # what stop() racing a disconnect produces, since
+                    # _handle_disconnect sets _poll_wakeup. The poller
+                    # absorbed its only cancel, looped on, and the await in
+                    # _cancel_task_if_exists never returned.
+                    #
+                    # 3.12 rewrote wait_for over asyncio.timeout and
+                    # propagates the cancel correctly, so on the versions
+                    # this package supports the check is belt-and-braces.
+                    # It is kept because shutdown should not rest on the
+                    # cancellation semantics of one await deep in the loop.
+                    _LOGGER.debug("Stopping the %s poller", self._device_type)
+                    return
 
                 if self._connected:
                     # Push is carrying state; nothing to fetch.
@@ -520,7 +540,7 @@ class IntesisHome(IntesisBase):
             async with self._web_session.post(
                 url=self._api_url,
                 data=get_status,
-                headers={"User-Agent": user_agent},
+                headers={"User-Agent": user_agent, **API_EXTRA_HEADERS},
                 cookies=self._cookies,
             ) as resp:
                 # Sent explicitly above rather than left to the session's own

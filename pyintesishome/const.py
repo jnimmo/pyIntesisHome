@@ -1,6 +1,16 @@
 """Constants for pyintesishome"""
 
-INTESIS_CMD_STATUS = '{"status":{"hash":"x"},"config":{"hash":"x"}}'
+# Sent as the "cmd" form field on every cloud HTTP poll. Matches a Proxyman
+# capture of AC Cloud 3.3.3 (iOS) byte-for-byte: the official app always
+# requests all five blocks, not just status/config, and always includes the
+# empty "permissions" string and the error block's "culture". We don't parse
+# scenes/patterns/permissions/error today, but sending the same shape as the
+# real app keeps our traffic indistinguishable from it.
+INTESIS_CMD_STATUS = (
+    '{"status":{"hash":"x"},"config":{"hash":"x"},"permissions":"",'
+    '"scenes":{"hash":"x"},"patterns":{"hash":"x"},'
+    '"error":{"hash":"x","culture":"en"}}'
+)
 INTESIS_NULL = 32768
 
 DEVICE_INTESISHOME = "IntesisHome"
@@ -445,6 +455,18 @@ API_APP_NAME = {
     DEVICE_AIRCONWITHME: "AirconWithMe",
     DEVICE_ANYWAIR: "anywAIR",
     DEVICE_INTESISHOME: "AC Cloud",
+}
+
+# Extra headers sent alongside User-Agent on every cloud HTTP poll, captured
+# from the same iOS traffic. Set explicitly rather than left to aiohttp's
+# defaults: aiohttp's own Accept-Encoding varies with which optional codec
+# packages (brotli, zstd) happen to be installed, and it sends no
+# Accept-Language of its own at all, so either would otherwise drift from
+# what the real app sends depending on the environment.
+API_EXTRA_HEADERS = {
+    "Accept": "*/*",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept-Language": "en;q=1, de;q=0.9, fr;q=0.8, it;q=0.7, es;q=0.6, ca;q=0.5",
 }
 
 LOCAL_CMD_LOGIN = "login"
