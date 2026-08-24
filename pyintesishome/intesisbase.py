@@ -52,6 +52,11 @@ class IntesisBase:
         self._receive_task: asyncio.Task = None
         self._error_message = None
         self._last_successful_update = None
+        # Set when the API rejects the credentials themselves, as opposed
+        # to failing for a reason a retry might survive. Consumers read it
+        # to start a reauthentication flow; Home Assistant turns it into
+        # ConfigEntryAuthFailed, whose reload is what clears it.
+        self._authentication_failed = False
         # How long state cached from the last successful update stays
         # trustworthy. Governs is_available, which is what consumers should
         # gate entity availability on. Subclasses that know their own update
@@ -675,6 +680,10 @@ class IntesisBase:
         is_connected flap, so long as HTTP polling is still getting
         through.
         """
+        if self._authentication_failed:
+            # Cached state may still be inside _stale_after, but nothing
+            # is going to refresh it until the credentials are fixed.
+            return False
         if self._connected:
             return True
         if self._last_successful_update is None:
@@ -683,6 +692,17 @@ class IntesisBase:
             datetime.now(timezone.utc) - self._last_successful_update
         ).total_seconds()
         return elapsed < self._stale_after
+
+    @property
+    def authentication_failed(self) -> bool:
+        """Returns true if the API rejected the credentials.
+
+        Distinct from is_available being false: this one will not fix
+        itself. The controller has to be rebuilt with working credentials,
+        which for Home Assistant means a reauth flow and a config entry
+        reload.
+        """
+        return self._authentication_failed
 
     @property
     def connection_retries(self) -> int:
