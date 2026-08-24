@@ -630,6 +630,33 @@ async def test_disconnect_does_not_reconnect(cloud_controller):
 
 
 @pytest.mark.asyncio
+async def test_stop_completes_when_a_disconnect_races_it(cloud_controller):
+    """stop() must not wait on a poller that outlived its cancellation.
+
+    _handle_disconnect() wakes the poller, and stop() cancels it in the same
+    loop iteration. On Python < 3.12 asyncio.wait_for discards a cancel
+    delivered while the future it was waiting on has already completed, so
+    the poller has to notice _stopping itself - otherwise stop() awaits a
+    task that never finishes and shutdown hangs for good.
+    """
+    # Exactly what stop() does, in one loop iteration and with no await
+    # between: a disconnect has already woken the poller, and the cancel
+    # lands before it has run.
+    cloud_controller._stopping = True
+    cloud_controller._poll_wakeup.set()
+    cloud_controller._poll_task.cancel()
+
+    for _ in range(10):
+        if cloud_controller._poll_task.done():
+            break
+        await asyncio.sleep(0)
+
+    assert cloud_controller._poll_task.done(), (
+        "the poller survived the single cancel() that stop() relies on"
+    )
+
+
+@pytest.mark.asyncio
 async def test_opening_a_socket_starts_a_keepalive(cloud_controller):
     """A live socket is kept healthy: the keepalive is what turns a
     half-dead connection into a noticed disconnect."""
