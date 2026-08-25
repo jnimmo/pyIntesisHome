@@ -27,16 +27,16 @@ _LOGGER = logging.getLogger("pyintesishome")
 class IntesisHomeLocal(IntesisBase):
     """pyintesishome local class."""
 
-    def __init__(self, host, username, password, loop=None, websession=None) -> None:
+    def __init__(self, host, username, password, loop=None, websession=None, scan_interval=30) -> None:
         """Constructor"""
         device_type = DEVICE_INTESISHOME_LOCAL
         self._session_id: str = ""
         self._datapoints: dict = {}
-        self._scan_interval = 6
+        self._scan_interval = scan_interval
         # Ceiling on the backed-off poll interval while the device is
         # failing. These units are not powerful, and polling a struggling
         # one every _scan_interval can make matters worse.
-        self._max_scan_interval = 30
+        self._max_scan_interval = max(60, scan_interval * 2)
         # Seconds without a successful poll before the device is reported
         # as disconnected. Deliberately expressed as elapsed time rather
         # than a failure count: a failed request can occupy anywhere from
