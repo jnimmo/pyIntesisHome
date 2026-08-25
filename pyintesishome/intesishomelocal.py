@@ -71,7 +71,11 @@ class IntesisHomeLocal(IntesisBase):
         response = await self._request(LOCAL_CMD_GET_DP_VALUE, uid="all")
 
         if response and "dpval" in response:
-            self._values = {dpval["uid"]: dpval["value"] for dpval in response["dpval"]}
+            self._values = {
+                dpval["uid"]: dpval["value"]
+                for dpval in response["dpval"]
+                if dpval.get("status", 0) == 0
+            }
             return self._values
         return {}
 
@@ -306,9 +310,12 @@ class IntesisHomeLocal(IntesisBase):
         response = await self._request(
             LOCAL_CMD_GET_DP_VALUE, uid=COMMAND_MAP[name]["uid"]
         )
-        if response is None:
+        if response is None or not response.get("dpval"):
             return None
-        return response["dpval"]["value"]
+        dpval = response["dpval"]
+        if dpval.get("status", 0) != 0:
+            return None
+        return dpval["value"]
 
     async def _set_value(self, device_id, uid, value):
         result = await self._request(
