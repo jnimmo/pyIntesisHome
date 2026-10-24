@@ -1,6 +1,7 @@
 """Tests for pyintesishome."""
 
 import asyncio
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from http.cookies import SimpleCookie
@@ -703,7 +704,10 @@ async def test_set_opens_the_socket_on_demand(cloud_controller):
         return True
 
     with patch.object(cloud_controller, "_ensure_socket", fake_ensure):
-        with patch.object(cloud_controller, "_send_command", return_value=None):
+        with (
+            patch.object(cloud_controller, "_send_command", return_value=None),
+            patch.object(cloud_controller, "_portal_set_value", return_value=False),
+        ):
             cloud_controller._set_ack_timeout = 0.05
             await cloud_controller.set_power_on(MOCK_DEVICE_ID)
             await cloud_controller.set_power_off(MOCK_DEVICE_ID)
@@ -1055,6 +1059,76 @@ def _mock_working_portal(mock_aioresponse):  # noqa: F811
         body="OK",
         repeat=True,
     )
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_set_falls_back_to_portal(
+    cloud_controller,
+    mock_aioresponse,  # noqa: F811
+):
+    """A socket that opens but never acks a SET must not strand the command.
+
+    The command server has been seen half-alive: TCP connects, the SET is
+    written, no set_ack ever comes back. The portal still delivers.
+    """
+    _mock_working_portal(mock_aioresponse)
+
+    async def fake_ensure():
+        cloud_controller._connected = True
+        return True
+
+    with (
+        patch.object(cloud_controller, "_ensure_socket", fake_ensure),
+        patch.object(cloud_controller, "_send_command", return_value=None),
+    ):
+        cloud_controller._set_ack_timeout = 0.05
+        assert await cloud_controller._set_value(MOCK_DEVICE_ID, 1, 1) is True
+
+    assert cloud_controller._portal_user_id == "4242"
+    assert not cloud_controller._pending_set_acks
+
+
+@pytest.mark.asyncio
+async def test_unacknowledged_set_fails_when_portal_also_fails(
+    cloud_controller,
+    mock_aioresponse,  # noqa: F811
+):
+    """No ack and no portal means the SET is reported failed, not raised."""
+    portal = PORTAL_URL[DEVICE_INTESISHOME]
+    mock_aioresponse.get(f"{portal}/login", body="maintenance page", repeat=True)
+
+    async def fake_ensure():
+        cloud_controller._connected = True
+        return True
+
+    with (
+        patch.object(cloud_controller, "_ensure_socket", fake_ensure),
+        patch.object(cloud_controller, "_send_command", return_value=None),
+    ):
+        cloud_controller._set_ack_timeout = 0.05
+        assert await cloud_controller._set_value(MOCK_DEVICE_ID, 1, 1) is False
+
+
+@pytest.mark.asyncio
+async def test_acknowledged_set_does_not_touch_the_portal(cloud_controller):
+    """An acked SET is done; the portal is only a fallback."""
+
+    async def fake_ensure():
+        cloud_controller._connected = True
+        return True
+
+    async def fake_send(message, wait_for_response=False):
+        seq = json.loads(message)["data"]["seqNo"]
+        cloud_controller._pending_set_acks[seq].future.set_result(True)
+
+    with (
+        patch.object(cloud_controller, "_ensure_socket", fake_ensure),
+        patch.object(cloud_controller, "_send_command", fake_send),
+        patch.object(cloud_controller, "_portal_set_value") as portal_set,
+    ):
+        assert await cloud_controller._set_value(MOCK_DEVICE_ID, 1, 1) is True
+
+    portal_set.assert_not_called()
 
 
 @pytest.mark.asyncio
