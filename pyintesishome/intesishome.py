@@ -675,6 +675,13 @@ class IntesisHome(IntesisBase):
         controller effectively read-only, and it says so rather than
         hanging until the ack timeout.
 
+        The same fallback applies when the socket opens but the SET is
+        never acknowledged. The command server has been seen in that
+        half-alive state (TCP connects, no set_ack ever comes back) while
+        the portal kept delivering commands. Portal SETs carry absolute
+        values, so a SET that did arrive and is then repeated through the
+        portal is harmless.
+
         ``use_socket=False`` is exempt: that is a deliberate read-only
         controller rather than a broken socket, so it does not fall back.
         """
@@ -725,9 +732,18 @@ class IntesisHome(IntesisBase):
                 seq,
                 self._set_ack_timeout,
             )
-            return False
         finally:
             self._pending_set_acks.pop(seq, None)
+
+        if await self._portal_set_value(device_id, uid, value):
+            _LOGGER.warning(
+                "SET uid=%s value=%s delivered via the web portal after "
+                "the socket did not acknowledge it",
+                uid,
+                value,
+            )
+            return True
+        return False
 
     async def _portal_set_value(self, device_id, uid, value) -> bool:
         """Send a SET through the brand's web portal.
