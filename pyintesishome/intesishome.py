@@ -77,13 +77,14 @@ class IntesisHome(IntesisBase):
         device_type=DEVICE_INTESISHOME,
         *,
         use_socket: bool = True,
+        use_tcp: bool = True,
         poll_interval: int = 120,
     ):
         """Construct a cloud controller.
 
-        Commands are the only thing that *opens* the socket, since it is
-        the sole transport that accepts them - but while it is open it is
-        also the state source, and polling stands down for the duration.
+        Commands open the socket unless use_tcp=False selects HTTPS only.
+        While it is open it is also the state source, and polling stands
+        down for the duration.
         Outside that window state comes from polling the HTTP endpoint.
 
         The socket's lifetime is therefore command-scoped: opened on
@@ -103,6 +104,8 @@ class IntesisHome(IntesisBase):
         :param use_socket: allow the socket to be opened for commands at
             all. False makes the controller read-only - it disables the
             web portal command fallback too, so nothing sends commands.
+        :param use_tcp: False sends commands directly through the HTTPS
+            portal (IntesisHome only). use_socket=False remains read-only.
         :param poll_interval: seconds between HTTP state polls. Clamped
             to a 60s floor to stay a good citizen of a third-party cloud
             API. Pass 0 or None to disable polling, which leaves state
@@ -130,6 +133,7 @@ class IntesisHome(IntesisBase):
         self._auth_token = None
         self._controller_id = username
         self._use_socket = use_socket
+        self._use_tcp = use_tcp
         self._stopping = False
         if poll_interval and poll_interval < POLL_INTERVAL_MIN:
             _LOGGER.debug(
@@ -171,6 +175,7 @@ class IntesisHome(IntesisBase):
         self._portal_session: aiohttp.ClientSession = None
         self._portal_user_id: str = None
         self._portal_lock = asyncio.Lock()
+        self._portal_refresh: asyncio.TimerHandle | None = None
 
     async def _parse_response(self, decoded_data):
         _LOGGER.debug("%s API Received: %s", self._device_type, decoded_data)
@@ -352,6 +357,9 @@ class IntesisHome(IntesisBase):
             if not pending.future.done():
                 pending.future.set_result(False)
         self._pending_set_acks.clear()
+        if self._portal_refresh:
+            self._portal_refresh.cancel()
+            self._portal_refresh = None
         if self._portal_session:
             if not self._portal_session.closed:
                 await self._portal_session.close()
@@ -368,13 +376,11 @@ class IntesisHome(IntesisBase):
         Returns True if a usable socket exists afterwards. Called only
         from the command path - nothing else should be opening one.
         """
+        if not self._use_socket or not self._use_tcp:
+            _LOGGER.debug("TCP commands disabled for %s", self._device_type)
+            return False
         if self._connected:
             return True
-        if not self._use_socket:
-            _LOGGER.warning(
-                "Cannot open a socket to %s: use_socket=False", self._device_type
-            )
-            return False
         if self._connecting:
             return False
 
@@ -686,11 +692,8 @@ class IntesisHome(IntesisBase):
                 if await self._portal_set_value(device_id, uid, value):
                     return True
             _LOGGER.warning(
-                "Cannot send SET to %s: no command socket. Commands need "
-                "outbound access to %s:%s",
+                "Cannot send SET to %s: command transports unavailable or disabled",
                 self._device_type,
-                self._cmd_server,
-                self._cmd_server_port,
             )
             return False
 
@@ -781,6 +784,8 @@ class IntesisHome(IntesisBase):
             self._portal_session = aiohttp.ClientSession(
                 headers={"User-Agent": PORTAL_USER_AGENT},
                 timeout=aiohttp.ClientTimeout(total=PORTAL_TIMEOUT),
+                # Reuse command bursts, but retire before the portal's idle close.
+                connector=aiohttp.TCPConnector(keepalive_timeout=3),
             )
         base = PORTAL_URL[self._device_type]
         async with self._portal_session.get(f"{base}/login") as resp:
@@ -816,6 +821,14 @@ class IntesisHome(IntesisBase):
         async with self._portal_session.post(url, headers=_PORTAL_XHR_HEADERS) as resp:
             body = (await resp.text()).strip()
         if body == "OK":
+            # The state endpoint can still return the old value immediately
+            # after OK. Coalesce command bursts into one delayed refresh.
+            if self._poll_interval:
+                if self._portal_refresh:
+                    self._portal_refresh.cancel()
+                self._portal_refresh = self._event_loop.call_later(
+                    3, self._poll_wakeup.set
+                )
             _LOGGER.info(
                 "SET uid=%s value=%s sent via the web portal (no socket)",
                 uid,

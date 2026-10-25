@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import aiohttp
 import pytest
 import pytest_asyncio
+from aiohttp import web
 
 from pyintesishome import (
     IHAuthenticationError,
@@ -1058,8 +1059,10 @@ def _mock_working_portal(mock_aioresponse):  # noqa: F811
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("use_tcp", [True, False])
 async def test_use_socket_false_does_not_use_the_portal_fallback(
     mock_aioresponse,  # noqa: F811
+    use_tcp,
 ):
     """use_socket=False means read-only, and the portal must not undo that.
 
@@ -1070,7 +1073,7 @@ async def test_use_socket_false_does_not_use_the_portal_fallback(
     _mock_working_portal(mock_aioresponse)
     async with aiohttp.ClientSession() as session:
         controller = IntesisHome(
-            MOCK_USER, MOCK_PASS, websession=session, use_socket=False
+            MOCK_USER, MOCK_PASS, websession=session, use_socket=False, use_tcp=use_tcp
         )
         await controller.connect()
 
@@ -1079,6 +1082,99 @@ async def test_use_socket_false_does_not_use_the_portal_fallback(
         assert controller._portal_user_id is None
 
         await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_https_only_commands_refresh_state_without_tcp(mock_aioresponse):  # noqa: F811
+    """HTTPS-only commands skip TCP and wake the existing state poller."""
+    _mock_working_portal(mock_aioresponse)
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, use_tcp=False
+        )
+        try:
+            with patch("asyncio.open_connection") as open_connection:
+                await controller.connect()
+                callback = AsyncMock()
+                controller.add_update_callback(callback)
+                assert await controller.set_temperature(MOCK_DEVICE_ID, 22) is True
+                refresh = controller._portal_refresh
+                callback.assert_not_awaited()
+                assert await controller.set_temperature(MOCK_DEVICE_ID, 23) is True
+                assert refresh.cancelled()
+                await wait_until(lambda: callback.await_count > 0)
+                assert callback.await_count == 2  # one update for each account device
+                assert controller.is_available
+                assert not controller.is_connected
+                open_connection.assert_not_called()
+        finally:
+            await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_https_only_failure_does_not_attempt_tcp(mock_aioresponse):  # noqa: F811
+    """A rejected portal login fails without falling back to disabled TCP."""
+    mock_aioresponse.get(f"{PORTAL_URL[DEVICE_INTESISHOME]}/login", body="maintenance")
+    async with aiohttp.ClientSession() as session:
+        controller = IntesisHome(
+            MOCK_USER, MOCK_PASS, websession=session, use_tcp=False
+        )
+        try:
+            with patch("asyncio.open_connection") as open_connection:
+                assert await controller.set_temperature(MOCK_DEVICE_ID, 22) is False
+                assert not controller._poll_wakeup.is_set()
+                open_connection.assert_not_called()
+        finally:
+            await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_portal_reuses_connections_only_within_idle_timeout(
+    aiohttp_server,
+    mock_aioresponse,  # noqa: F811
+):
+    """Exercise real HTTP connections and cookies across consecutive commands."""
+    transports, logins, values = [], [], []
+
+    async def portal(request):
+        transports.append(request.transport)
+        if request.path == "/login":
+            if request.method == "GET":
+                return web.Response(
+                    text='<input name="signin[_csrf_token]" value="csrf">'
+                )
+            logins.append(await request.post())
+            response = web.Response()
+            response.set_cookie("session", "test-login")
+            return response
+        if request.cookies.get("session") != "test-login":
+            return web.Response(status=403)
+        if request.path == "/panel/headers":
+            return web.Response(text="userId=4242,")
+        values.append(request.query["value"])
+        return web.Response(text="OK")
+
+    app = web.Application()
+    app.router.add_route("*", "/{path:.*}", portal)
+    server = await aiohttp_server(app)
+    base = str(server.make_url("")).replace("127.0.0.1", "localhost").rstrip("/")
+    mock_aioresponse.stop()
+    with patch.dict(PORTAL_URL, {DEVICE_INTESISHOME: base}):
+        async with aiohttp.ClientSession() as session:
+            controller = IntesisHome(
+                MOCK_USER, MOCK_PASS, websession=session, use_tcp=False
+            )
+            try:
+                assert await controller.set_temperature(MOCK_DEVICE_ID, 22) is True
+                assert await controller.set_temperature(MOCK_DEVICE_ID, 23) is True
+                await asyncio.sleep(3.1)
+                assert await controller.set_temperature(MOCK_DEVICE_ID, 24) is True
+            finally:
+                await controller.stop()
+    assert values == ["220", "230", "240"]
+    assert len(logins) == 1
+    assert len(set(transports[:5])) == 1
+    assert transports[-1] is not transports[0]
 
 
 @pytest.mark.asyncio
@@ -1095,9 +1191,12 @@ async def test_stop_clears_the_cached_portal_login(
 
     assert await cloud_controller._set_value(MOCK_DEVICE_ID, 9, 220) is True
     assert cloud_controller._portal_user_id == "4242"
+    refresh = cloud_controller._portal_refresh
 
     await cloud_controller.stop()
     assert cloud_controller._portal_session is None
+    assert refresh.cancelled()
+    assert cloud_controller._portal_refresh is None
     assert cloud_controller._portal_user_id is None
 
     # The next SET must log in again rather than post through the session

@@ -30,7 +30,7 @@ climate:
 - Instantiate the IntesisHome controller device with username and password for the accloud.intesis.com website.
 - `connect()` authenticates, loads state over HTTPS, and starts a poller. It does **not** open a socket, so start-up doesn't depend on a high port being reachable.
 - State comes from polling the same HTTPS endpoint the mobile app uses, every `poll_interval` seconds.
-- **Commands are the only thing that opens the TCP socket**, because it is the one transport that accepts them. It is opened on demand and reopened by the next command whenever it has died.
+- Commands try TCP first, then fall back to the HTTPS web portal. Set `use_tcp=False` to send commands directly over HTTPS without attempting the command socket.
 - While that socket is open it also **pushes status**, and polling stands down — so for the duration it is the source of state, not merely a bonus.
 - Callbacks to be notified of state updates can be added with the add_update_callback() method.
 - Use the `is_available` property to decide whether the device is usable — see below.
@@ -63,6 +63,7 @@ controller = IntesisHome(
     "username",
     "password",
     use_socket=True,  # default. False = never open a socket (read-only)
+    use_tcp=False,  # HTTPS-only commands; omit to retain TCP-first behavior
     poll_interval=120,  # seconds between HTTPS state polls
 )
 ```
@@ -70,27 +71,24 @@ controller = IntesisHome(
 `poll_interval` is clamped to a 60 second floor to stay a good citizen of a
 third-party API; pass `0` or `None` to disable polling entirely.
 
-#### Limitation: commands require the socket
+#### HTTPS-only commands
 
-The cloud HTTPS endpoint appears to be read-only, so sending a command
-(`set_temperature`, `set_power_on`, …) needs the socket. If it cannot be
-established — for example on a network that blocks it outbound — the
-controller still reports state correctly but is effectively **read-only**, and
-the `set_*` methods return `False`.
+`use_tcp=False` skips TCP connection attempts while retaining HTTPS state
+polling and commands through `accloud.intesis.com/device/setVal`. The portal
+is currently supported only for `device_type="IntesisHome"`; other brands
+return `False` for commands without a working TCP connection.
 
-This is a limitation of what has been implemented, not a proven property of
-the API. `examples/probe_cloud_set.py` establishes that `api.php/get/control`
-has no write command: it dispatches solely on the `cmd` parameter, treats that
-as a map of section names, and echoes unknown sections back as `{"": ""}`
-stubs — identically for `set`, `setdatapointvalue`, `control` and a deliberately
-invented name. Request bodies are ignored, and `POST /api.php/set/control`
-returns HTTP 404.
+The portal login is cached and consecutive commands reuse the connection.
+Connections idle for three seconds are retired before the portal closes them.
+Accepted commands schedule
+one background refresh three seconds after the last command, allowing the
+cloud state to catch up without delaying the command's return. Acceptance
+does not prove that the physical device has applied the setting; polls confirm
+the resulting state. Failed commands return `False`.
 
-That result is scoped to one path. The API is path-based, and at least one
-other path does perform writes: the official app activates a scene via
-`POST /api.php/scenes/exe`. Since scene actions are `{deviceId, uid, value}`
-triples — the same shape as a SET — a scene-based write path over HTTPS may
-well be reachable. That has not been investigated yet.
+`use_socket=False` retains its existing read-only meaning regardless of
+`use_tcp`. These are library arguments; the HA integration must expose them
+before they can be used in HA configuration.
 
 ### Library basic example
 
